@@ -338,3 +338,30 @@ There is no path install. For local smoke tests, symlink the repo into
 `$HERMES_HOME/plugins/advisor-call`, then run `hermes plugins enable
 advisor-call`, `hermes plugins validate <path>` and `hermes plugins doctor
 <path>`. Tests point `HERMES_HOME` at a temporary directory.
+
+---
+
+## 3. Implementation notes (Phase 1)
+
+- **Call ids** are `c-` plus 8 hex characters (the plan's 4 would collide in
+  the ledger's `calls` primary key over months of use).
+- **Concurrent sessions.** Every exchange reserves its pre-flight estimate
+  while it is in flight. Other sessions' pre-flight checks add those
+  reservations to today's spend, so two sessions cannot both spend the last
+  of today's allowance.
+- **A failed exchange** leaves the advisor-side conversation unchanged (the
+  executor's message is not appended), so user/assistant turns always
+  alternate. If it was billed, it still counts toward the message limit.
+- **A user hang-up while a reply is in flight** ends the call at once; the
+  late reply's cost is still added and the call row is updated.
+- **Pre-flight with caching on** prices the whole prompt at the cache-write
+  price, matching the pessimistic bill (section 2.1). Consequence: with
+  caching on, the plugin's own count runs about 25% higher on input than
+  with caching off (2.50 vs 2.00 per MTok), so a call reaches its cap a
+  little sooner, even though the real spend is much lower.
+- **Redaction** calls Hermes' `redact_sensitive_text(text, force=True,
+  redact_url_credentials=True)`, so it applies even if the user turned
+  Hermes' own redaction off. Verified live: API keys and URL passwords are
+  masked. A small built-in redactor is used only if Hermes' cannot be
+  imported.
+- **Ledger file** is `plugin-data/advisor-call/ledger.db`.

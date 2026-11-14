@@ -13,6 +13,7 @@ dev = ["pytest>=8", "ruff>=0.6"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-ra"
 
 [tool.ruff]
