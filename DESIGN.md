@@ -216,7 +216,23 @@ Minimum cacheable prefix on Sonnet 5.5: **512 tokens**.
 
 ## 2. Changes to the plan
 
-### 2.1 Caching and billing (from O-2): **open decision**
+### 2.1 Caching and billing (from O-2): **decided, known gap**
+
+**Decision (2026-11-14):** accepted as a known gap for v1. No Admin API key
+is used to read real spend.
+
+- `advisor.cache_ttl` defaults to `off`. With no caching, Hermes'
+  `input_tokens` covers the whole prompt, so the bill is exact.
+- If the user sets `5m` or `1h`, markers are sent. Because Hermes hides the
+  cache counts, the plugin bills pessimistically: every input token it
+  estimates was sent but Hermes did not report is priced as a cache write.
+  This over-states the cost, so caps still hold, but `/phone bill` will read
+  higher than the Console. The plugin logs a one-time warning saying so.
+- If a later Hermes reports cache counts (nonzero `cache_read_tokens` or
+  `cache_write_tokens`), the plugin uses them and bills exactly.
+- README "Known gaps" states this plainly.
+
+Options that were considered:
 
 Hermes hides cache usage, so the plugin cannot bill a cached exchange
 correctly. Options:
@@ -227,11 +243,10 @@ correctly. Options:
 | B | Keep caching on; bill pessimistically by treating every input token Hermes did not report as a cache write | Always over-states (reads are charged as writes), so caps hold but pacing is stricter than reality, and `/phone bill` will not match the Console (L-12) | Cheapest real spend |
 | C | Fix upstream: keep `cache_read_input_tokens` and `cache_creation_input_tokens` in the adapter's usage | Exact with caching | One-line Hermes change; needs a release |
 
-Recommendation: **A now, and C as an upstream issue.** When cache counts
-arrive (a nonzero `cache_write_tokens` on a call with markers), default
-caching back on in a later release. If `cache_ttl` is set to `5m` or `1h`
-on a Hermes that still drops the counts, the plugin uses B's pessimistic
-billing and logs a warning.
+Chosen: A by default, with B's pessimistic billing when caching is turned
+on. C (an upstream issue) is optional and not required for v1. Reading real
+spend through the Admin API was ruled out: it needs an organization admin
+key on the Hermes host, and its data lags 30 minutes to 24 hours.
 
 ### 2.2 `max_tokens` (from O-3b)
 

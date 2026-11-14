@@ -17,6 +17,18 @@ multi-message consult, with human approval per call and hard bill caps.
 
 Requires Hermes Agent **>= 0.22.0**.
 
+## Known gaps
+
+- **Prompt caching is off by default.** Hermes (v0.23.1) does not pass
+  Anthropic's cache token counts to plugins, so a cached exchange cannot be
+  billed exactly. With caching off the bill is exact. If you turn it on
+  (`advisor.cache_ttl: 5m` or `1h`), calls get cheaper but the plugin bills
+  on the safe side: caps still hold, and `/phone bill` will read higher than
+  the Claude Console.
+- **Only this plugin's spend is counted.** The budget assumes the whole
+  monthly amount is available to the plugin. Spend from other tools on the
+  same credit is invisible; lower `budget.per_month_usd` to allow for it.
+
 ## Development
 
 No runtime dependencies. Tests run without Hermes installed.
