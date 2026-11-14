@@ -1,0 +1,23 @@
+# Dev tooling only. The plugin has no runtime dependencies beyond the
+# standard library and Hermes itself; Hermes loads it from plugin.yaml.
+[project]
+name = "hermes-advisor-call"
+version = "0.1.0"
+description = "Hermes Agent plugin: phone a stronger advisor model, with per-call approval and bill caps"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
