@@ -221,13 +221,15 @@ Minimum cacheable prefix on Sonnet 5.5: **512 tokens**.
 **Decision (2026-11-14):** accepted as a known gap for v1. No Admin API key
 is used to read real spend.
 
-- `advisor.cache_ttl` defaults to `off`. With no caching, Hermes'
-  `input_tokens` covers the whole prompt, so the bill is exact.
-- If the user sets `5m` or `1h`, markers are sent. Because Hermes hides the
-  cache counts, the plugin bills pessimistically: every input token it
-  estimates was sent but Hermes did not report is priced as a cache write.
-  This over-states the cost, so caps still hold, but `/phone bill` will read
-  higher than the Console. The plugin logs a one-time warning saying so.
+- `advisor.cache_ttl` defaults to `5m` (caching on), as in the original
+  plan. Markers are sent, and because Hermes hides the cache counts, the
+  plugin bills pessimistically: every input token it estimates was sent but
+  Hermes did not report is priced as a cache write. This over-states the
+  cost, so caps still hold, but `/phone bill` will read higher than the
+  Console. The plugin logs a one-time warning saying so.
+- With `cache_ttl: off`, Hermes' `input_tokens` covers the whole prompt, so
+  the bill is exact, at the price of re-sending the transcript at full input
+  price on every follow-up.
 - If a later Hermes reports cache counts (nonzero `cache_read_tokens` or
   `cache_write_tokens`), the plugin uses them and bills exactly.
 - README "Known gaps" states this plainly.
@@ -243,8 +245,8 @@ correctly. Options:
 | B | Keep caching on; bill pessimistically by treating every input token Hermes did not report as a cache write | Always over-states (reads are charged as writes), so caps hold but pacing is stricter than reality, and `/phone bill` will not match the Console (L-12) | Cheapest real spend |
 | C | Fix upstream: keep `cache_read_input_tokens` and `cache_creation_input_tokens` in the adapter's usage | Exact with caching | One-line Hermes change; needs a release |
 
-Chosen: A by default, with B's pessimistic billing when caching is turned
-on. C (an upstream issue) is optional and not required for v1. Reading real
+Chosen: B by default (caching on, pessimistic billing), with A available
+as `cache_ttl: off` for exact bills. C (an upstream issue) is optional and not required for v1. Reading real
 spend through the Admin API was ruled out: it needs an organization admin
 key on the Hermes host, and its data lags 30 minutes to 24 hours.
 
