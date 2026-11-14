@@ -1,0 +1,24 @@
+name: advisor-call
+version: 0.1.0
+description: >
+  Let a cheap or local main model phone a stronger advisor model for a
+  multi-message consult, with human approval per call and hard bill caps.
+author: jmdevita
+license: MIT
+homepage: https://github.com/jmdevita/hermes-advisor-call
+requires_hermes: ">=0.22.0"
+provides_tools:
+  - advisor_call_open
+  - advisor_call_say
+  - advisor_call_hangup
+provides_hooks:
+  - pre_tool_call
+  - pre_llm_call
+  - transform_llm_output
+  - on_session_finalize
+# Not a known manifest field in v0.23.1 (the loader logs it as ignored), but
+# `hermes plugins validate` compares it with what register() adds.
+provides_middleware:
+  - llm_request
+config_keys:
+  - plugins.entries.advisor-call
