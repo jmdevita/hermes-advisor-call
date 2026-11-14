@@ -89,6 +89,7 @@ class FakeCtx:
 
     def register_command(self, name, handler, **kwargs):
         self.commands[name] = {"handler": handler, **kwargs}
+        return object()  # Hermes returns a registration handle, or None on a name clash
 
     def register_system_prompt_section(self, *args, **kwargs):
         self.system_prompt_sections.append({"args": args, **kwargs})
@@ -156,7 +157,13 @@ def config() -> dict[str, Any]:
 
 
 @pytest.fixture
-def runtime(fake_llm, db_path, clock, config):
+def approvals() -> dict[str, Any]:
+    """Hermes' approvals block; tests edit it in place."""
+    return {"mode": "manual"}
+
+
+@pytest.fixture
+def runtime(fake_llm, db_path, clock, config, approvals):
     from advisor_call.ledger import Ledger
     from advisor_call.runtime import Runtime
     from advisor_call.settings import parse_settings
@@ -164,7 +171,7 @@ def runtime(fake_llm, db_path, clock, config):
     return Runtime(
         llm=lambda: fake_llm,
         ledger=Ledger.at_path(db_path),
-        settings=lambda: parse_settings(config),
+        settings=lambda: parse_settings(config, None, approvals),
         clock=clock,
         redactor=lambda: None,
     )

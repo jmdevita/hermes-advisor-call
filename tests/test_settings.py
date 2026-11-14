@@ -128,3 +128,18 @@ def test_auxiliary_slot_sets_model_and_provider():
     plain = parse_settings(VALID, {"advisor_call_sonnet": {"timeout": 9}}).line("sonnet")
     assert (plain.provider, plain.model) == ("anthropic", "claude-sonnet-5-5")
     assert parse_settings(VALID, "not a dict").line("sonnet").model == "claude-sonnet-5-5"
+
+
+def test_user_extra_body_without_max_tokens_refuses_line():
+    # Hermes replaces the plugin's extra_body with the user's (DESIGN.md 2.2),
+    # which would drop the reply limit.
+    aux = {"advisor_call_sonnet": {"extra_body": {"metadata": {"user_id": "x"}}}}
+    line = parse_settings(VALID, aux).line("sonnet")
+    assert not line.usable and "add max_tokens: 4000" in line.problem
+    aux["advisor_call_sonnet"]["extra_body"]["max_tokens"] = 1500
+    line = parse_settings(VALID, aux).line("sonnet")
+    assert line.usable and line.max_tokens == 1500
+    assert parse_settings(VALID, {"advisor_call_sonnet": {"extra_body": {}}}).line("sonnet").usable
+    assert (
+        parse_settings({**VALID, "advisor": {"max_tokens": 900}}).line("sonnet").max_tokens == 900
+    )

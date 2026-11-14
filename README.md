@@ -4,8 +4,8 @@ A [Hermes Agent](https://github.com/NousResearch/hermes-agent) plugin that
 lets a cheap or local main model **phone a stronger advisor model** for a
 multi-message consult, with human approval per call and hard bill caps.
 
-> **Status: in development, not usable yet.** Phase 0 (verification and
-> scaffold) is done; the plugin registers nothing yet. See
+> **Status: in development.** Phases 0 to 3 (verification, core logic, tools,
+> hooks and wiring) are done; live testing on a real Hermes is next. See
 > [DESIGN.md](DESIGN.md) for what has been verified against Hermes v0.23.1.
 
 - The executor (your main model) asks to call; you approve once through
@@ -38,6 +38,7 @@ No runtime dependencies. Tests run without Hermes installed.
 ```bash
 scripts/ci.sh            # ruff + pytest on Python 3.11 and 3.12 (needs uv)
 scripts/hermes-smoke.sh  # load this checkout into a real Hermes and run its plugin checks
+scripts/hermes-e2e.sh    # full call through real Hermes against a local fake Anthropic server (no spend)
 ```
 
 ## License

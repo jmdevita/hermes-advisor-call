@@ -177,7 +177,7 @@ def _bill_for(
         return Charge(
             estimate_cost(
                 req.prompt_chars,
-                settings.max_tokens,
+                line.max_tokens,
                 line.prices,
                 caching=settings.caching,
                 reused_chars=reused,
@@ -245,7 +245,7 @@ def exchange(
         )
         est = estimate_cost(
             req.prompt_chars,
-            settings.max_tokens,
+            line.max_tokens,
             line.prices,
             caching=settings.caching,
             reused_chars=reused,

@@ -1,16 +1,13 @@
 """Hermes entry point for the advisor-call plugin.
 
-Wiring only; logic lives in the advisor_call sub-package. Hermes imports this
-directory as the package ``hermes_plugins.advisor_call``, so every import
-here must be relative.
+Wiring lives in advisor_call/plugin.py. Hermes imports this directory as the
+package ``hermes_plugins.advisor_call``; the relative import runs inside
+register() so that importing this file outside a package (pytest collects
+the repo root) does not fail.
 """
 
 
 def register(ctx):
-    """Register the plugin with Hermes.
+    from .advisor_call.plugin import register as _register
 
-    Phase 0 placeholder: registers nothing yet. Tools, hooks, middleware,
-    the /phone command, the system prompt section and one auxiliary task per
-    advisor line are wired in Phase 3.
-    """
-    return None
+    _register(ctx)

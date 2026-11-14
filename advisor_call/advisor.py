@@ -108,7 +108,7 @@ def ask(llm: Any, line: Line, settings: Settings, request: AdvisorRequest) -> Ad
         result = llm.complete(
             request.messages,
             task=line.task_key,
-            max_tokens=settings.max_tokens,
+            max_tokens=line.max_tokens,
             timeout=settings.timeout_seconds,
             purpose="advisor-call",
         )

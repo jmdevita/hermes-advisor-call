@@ -272,17 +272,24 @@ organization admin key on the Hermes host, and its data lags 30 minutes to
 
 ### 2.2 `max_tokens` (from O-3b)
 
-- Register each line's auxiliary task with
+- Each line's auxiliary task is registered with
   `defaults={"provider": ..., "model": ..., "timeout": ...,
-  "extra_body": {"max_tokens": <advisor.max_tokens>}}`. Still pass
-  `max_tokens=` to `complete()` for routes that honour it.
+  "extra_body": {"max_tokens": <limit>}}`. `max_tokens=` is also passed to
+  `complete()` for routes that honour it.
+- **Verified end to end** (`scripts/hermes-e2e.sh`): the request Hermes
+  sends carries `max_tokens: 4000`.
+- **A user `extra_body` replaces the plugin's, it does not merge.** Hermes
+  merges provider, model and timeout defaults under the user's
+  `auxiliary.advisor_call_<line>` block, but an `extra_body` there replaces
+  the registered one whole (verified). Without a `max_tokens` in it, replies
+  would be unbounded (up to 128K tokens, about $1.28). So:
+  - a user `extra_body` without `max_tokens` makes the line unusable, with
+    the message "auxiliary.advisor_call_<line>.extra_body replaces the
+    plugin's reply limit; add max_tokens: 4000 to it";
+  - a user `max_tokens` there becomes the line's reply limit, used for the
+    pre-flight estimate too.
 - Because `extra_body` is fixed at registration, a change to
-  `advisor.max_tokens` needs a restart. A user's own
-  `auxiliary.advisor_call_<line>.extra_body` overrides it.
-- The pre-flight estimate assumes the full `max_tokens` of output, so the
-  per-call cap stays bounded only if this override works. Phase 4 adds a
-  live check: a deliberately long question with `max_tokens: 300` must come
-  back with at most 300 output tokens.
+  `advisor.max_tokens` needs a restart.
 - Sonnet 5.5 thinks by default and thinking counts against `max_tokens`.
   The empty-text guard (plan 7.5) stays.
 
@@ -406,3 +413,35 @@ advisor-call`, `hermes plugins validate <path>` and `hermes plugins doctor
 - **Restart detection.** A call row is written to the ledger when the call
   opens. After a gateway restart, `advisor_call_say` with that `call_id`
   finds the open row and reports "call dropped (gateway restarted)".
+
+## 5. Implementation notes (Phase 3)
+
+- **End-to-end check in real Hermes**, no network and no spend:
+  `scripts/hermes-e2e.sh` loads the plugin into a throwaway Hermes home and
+  points the advisor slot at a local fake Anthropic server. It checks the
+  approval directive, a full open / say / hangup through Hermes' own tool
+  dispatch (`model_tools.handle_function_call`, so `pre_tool_call` runs),
+  the model and `max_tokens` on the wire, breakpoint A on the opening and
+  A + B on the follow-up, and that the bill is flagged as an estimate
+  because Hermes dropped the server's cache counts (O-2 confirmed). The
+  script relaxes Hermes' "Anthropic-compatible host" check for 127.0.0.1
+  inside its own process only; it lives under `tests/e2e/` so Hermes'
+  private-import lint skips it.
+- **Approvals mode** is read from Hermes' `approvals.mode` with the same
+  normalisation Hermes uses (YAML `off` is false; unknown means manual).
+- **The sender check also guards `advisor_call_say`**, not only
+  `advisor_call_open`, so a different sender in the same session cannot
+  drive an approved call.
+- **Session ids for `/phone`.** The gateway passes the chat's current
+  session id, the same one the agent's tools and hooks see. If `/phone`
+  is the first message in a new chat there is no session yet, and the
+  command says to send a message first.
+- **`/phone ask`** opens a one-message call marked `initiated_by: user`,
+  tells the advisor the message is from the user, ends the call, and
+  suppresses the executor's bill footer for it. It is refused while the
+  executor has a call open.
+- **Bill footer** marks estimated amounts: `~$0.12 of $0.50 (estimate)`.
+- **The root `__init__.py` imports lazily** inside `register()`, so pytest
+  can import the repo root outside a package.
+- **Source files must not contain invisible characters.** Hermes' security
+  scan flags them; the reason sanitiser builds its pattern from code points.

@@ -87,6 +87,7 @@ class Line:
     model: str
     prices: Prices | None  # None when misconfigured
     problem: str = ""  # why the line cannot be used; "" when usable
+    max_tokens: int = 4000  # effective reply limit for this line
 
     @property
     def usable(self) -> bool:
@@ -129,6 +130,7 @@ class Settings:
     allowed_senders: tuple[str, ...]
     bill_footer: bool
     log_transcripts: bool
+    approvals_mode: str = "manual"  # Hermes' approvals.mode: manual | smart | off
     warnings: tuple[str, ...] = field(default=())
 
     def line(self, name: str | None) -> Line | None:
@@ -248,26 +250,58 @@ def _line(name: str, raw: Any, w: _Collector) -> Line:
     return Line(name=name, provider=str(provider), model=str(model), prices=prices, problem=problem)
 
 
-def _apply_auxiliary(line: Line, auxiliary: Any) -> Line:
-    """The model and provider actually configured in Hermes' auxiliary slot
-    for this line win over the line's own defaults."""
-    if not isinstance(auxiliary, dict):
-        return line
-    slot = auxiliary.get(line.task_key)
-    if not isinstance(slot, dict):
-        return line
-    provider = slot.get("provider")
-    model = slot.get("model")
+def _apply_auxiliary(line: Line, auxiliary: Any, max_tokens: int, w: _Collector) -> Line:
+    """Apply Hermes' ``auxiliary.<task>`` slot to a line.
+
+    - The slot's model and provider win over the line's defaults.
+    - The plugin caps reply length through the slot's ``extra_body.max_tokens``
+      (DESIGN.md, O-3b). A user ``extra_body`` *replaces* the plugin's instead
+      of merging with it, so a user ``extra_body`` without ``max_tokens``
+      would leave replies unbounded: the line is then refused. A user
+      ``max_tokens`` there becomes the line's reply limit.
+    """
+    provider, model, limit, problem = line.provider, line.model, max_tokens, line.problem
+    slot = auxiliary.get(line.task_key) if isinstance(auxiliary, dict) else None
+    if isinstance(slot, dict):
+        if isinstance(slot.get("provider"), str) and slot["provider"]:
+            provider = slot["provider"]
+        if isinstance(slot.get("model"), str) and slot["model"]:
+            model = slot["model"]
+        extra = slot.get("extra_body")
+        if isinstance(extra, dict) and extra:
+            user_limit = extra.get("max_tokens")
+            if isinstance(user_limit, int) and not isinstance(user_limit, bool) and user_limit > 0:
+                limit = user_limit
+            elif not problem:
+                problem = (
+                    f"auxiliary.{line.task_key}.extra_body replaces the plugin's reply "
+                    f"limit; add max_tokens: {max_tokens} to it"
+                )
+                w.warn(f"advisor line {line.name!r} is misconfigured: {problem}")
     return Line(
         name=line.name,
-        provider=str(provider) if isinstance(provider, str) and provider else line.provider,
-        model=str(model) if isinstance(model, str) and model else line.model,
+        provider=provider,
+        model=model,
         prices=line.prices,
-        problem=line.problem,
+        problem=problem,
+        max_tokens=limit,
     )
 
 
-def parse_settings(raw: Any, auxiliary: Any = None) -> Settings:
+APPROVAL_MODES = ("manual", "smart", "off")
+
+
+def normalize_approvals_mode(mode: Any) -> str:
+    """Same rules as Hermes' tools.approval_context._normalize_approval_mode:
+    YAML `off` arrives as False; unknown values mean manual."""
+    if isinstance(mode, bool):
+        return "off" if mode is False else "manual"
+    if isinstance(mode, str) and mode.strip().lower() in APPROVAL_MODES:
+        return mode.strip().lower()
+    return "manual"
+
+
+def parse_settings(raw: Any, auxiliary: Any = None, approvals: Any = None) -> Settings:
     """Merge the user's ``plugins.entries.advisor-call`` mapping over the
     defaults and validate it. ``auxiliary`` is Hermes' ``auxiliary`` config
     block, used for each line's effective model and provider. Never raises;
@@ -285,7 +319,7 @@ def parse_settings(raw: Any, auxiliary: Any = None) -> Settings:
     elif not isinstance(lines_raw, dict) or not lines_raw:
         w.warn("lines must be a non-empty mapping; using the default sonnet line")
         lines_raw = copy.deepcopy(DEFAULT_LINES)
-    lines = {str(n): _apply_auxiliary(_line(str(n), v, w), auxiliary) for n, v in lines_raw.items()}
+    lines = {str(n): _line(str(n), v, w) for n, v in lines_raw.items()}
 
     default_line = raw.get("default_line") or DEFAULTS["default_line"]
     if not isinstance(default_line, str) or default_line not in lines:
@@ -354,6 +388,9 @@ def parse_settings(raw: Any, auxiliary: Any = None) -> Settings:
         w.warn("allowed_senders must be a list of user IDs; ignoring it")
         senders = ()
 
+    max_tokens = _integer(adv.get("max_tokens"), ad["max_tokens"], "advisor.max_tokens", w)
+    lines = {n: _apply_auxiliary(line, auxiliary, max_tokens, w) for n, line in lines.items()}
+
     settings = Settings(
         default_line=default_line,
         lines=lines,
@@ -371,7 +408,7 @@ def parse_settings(raw: Any, auxiliary: Any = None) -> Settings:
             c.get("tool_output_chars"), cd["tool_output_chars"], "context.tool_output_chars", w
         ),
         redact_secrets=_boolean(c.get("redact_secrets"), True, "context.redact_secrets", w),
-        max_tokens=_integer(adv.get("max_tokens"), ad["max_tokens"], "advisor.max_tokens", w),
+        max_tokens=max_tokens,
         timeout_seconds=_number(
             adv.get("timeout_seconds"),
             ad["timeout_seconds"],
@@ -383,6 +420,9 @@ def parse_settings(raw: Any, auxiliary: Any = None) -> Settings:
         allowed_senders=senders,
         bill_footer=_boolean(raw.get("bill_footer"), True, "bill_footer", w),
         log_transcripts=_boolean(raw.get("log_transcripts"), False, "log_transcripts", w),
+        approvals_mode=normalize_approvals_mode(
+            approvals.get("mode") if isinstance(approvals, dict) else None
+        ),
         warnings=tuple(w.warnings),
     )
     return settings
@@ -419,9 +459,10 @@ def read_settings() -> Settings:
         config = load_config_readonly()
         section = copy.deepcopy(plugin_section(config))
         auxiliary = copy.deepcopy(config.get("auxiliary")) if isinstance(config, dict) else None
+        approvals = copy.deepcopy(config.get("approvals")) if isinstance(config, dict) else None
     except Exception as exc:  # noqa: BLE001 - config read must never break a turn
         log.warning("advisor-call: could not read config (%s); spending is refused", exc)
-        section = auxiliary = None
-    settings = parse_settings(section, auxiliary)
+        section = auxiliary = approvals = None
+    settings = parse_settings(section, auxiliary, approvals)
     _log_once(settings.warnings)
     return settings
