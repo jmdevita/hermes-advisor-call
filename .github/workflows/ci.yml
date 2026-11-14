@@ -1,9 +1,11 @@
 name: ci
 
+# Manual only for now: GitHub Actions is unavailable on this private repo.
+# Run scripts/ci.sh locally instead. To restore automatic runs, add back:
+#   push: {branches: [main]}
+#   pull_request:
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
