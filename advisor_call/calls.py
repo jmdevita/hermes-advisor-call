@@ -91,7 +91,7 @@ class Call:
 
 @dataclass
 class Grant:
-    """A /phone allow pre-authorization for one session."""
+    """A /second-opinion allow pre-authorization for one session."""
 
     line: str
     cap_usd: float | None

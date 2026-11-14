@@ -1,8 +1,9 @@
 name: advisor-call
 version: 0.1.0
 description: >
-  Let a cheap or local main model phone a stronger advisor model for a
-  multi-message consult, with human approval per call and hard bill caps.
+  Let a cheap or local main model get a second opinion from a stronger
+  advisor model, as a multi-message consult with human approval per call and
+  hard bill caps.
 author: jmdevita
 license: MIT
 homepage: https://github.com/jmdevita/hermes-advisor-call

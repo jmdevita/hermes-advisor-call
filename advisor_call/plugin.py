@@ -6,7 +6,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from .commands import ARGS_HINT, COMMAND, DESCRIPTION, FALLBACK_COMMAND, PhoneCommand
+from .commands import ARGS_HINT, COMMAND, DESCRIPTION, FALLBACK_COMMAND, SecondOpinionCommand
 from .hooks import Hooks
 from .ledger import Ledger
 from .prompts import EXECUTOR_GUIDANCE, SYSTEM_PROMPT_SECTION_ID
@@ -26,7 +26,7 @@ def register(
     ledger: Ledger | None = None,
     clock: Any = None,
 ) -> Runtime:
-    """Register tools, hooks, middleware, /phone, the executor guidance and
+    """Register tools, hooks, middleware, /second-opinion, the executor guidance and
     one auxiliary task per configured advisor line. Never touches ctx.llm
     here: it is resolved lazily, on the first advisor request."""
     rt = Runtime(
@@ -49,12 +49,14 @@ def register(
         ctx.register_hook(hook, getattr(hooks, hook))
     ctx.register_middleware("llm_request", hooks.llm_request)
 
-    phone = PhoneCommand(rt)
-    if ctx.register_command(COMMAND, phone, description=DESCRIPTION, args_hint=ARGS_HINT) is None:
+    command = SecondOpinionCommand(rt)
+    if ctx.register_command(COMMAND, command, description=DESCRIPTION, args_hint=ARGS_HINT) is None:
         log.warning(
             "advisor-call: /%s is taken; registering /%s instead", COMMAND, FALLBACK_COMMAND
         )
-        ctx.register_command(FALLBACK_COMMAND, phone, description=DESCRIPTION, args_hint=ARGS_HINT)
+        ctx.register_command(
+            FALLBACK_COMMAND, command, description=DESCRIPTION, args_hint=ARGS_HINT
+        )
 
     ctx.register_system_prompt_section(SYSTEM_PROMPT_SECTION_ID, EXECUTOR_GUIDANCE)
 

@@ -37,13 +37,13 @@ OPEN, SAY, HANGUP = "advisor_call_open", "advisor_call_say", "advisor_call_hangu
 OPEN_SCHEMA: dict[str, Any] = {
     "name": OPEN,
     "description": (
-        "Phone a stronger senior model for advice on a hard problem. The user must approve "
-        "the call. Use it when you are stuck after real attempts, facing an architecture or "
-        "debugging decision with costly consequences, or when the user asks you to get a "
-        "second opinion. Do not use it for routine work. The advisor has no tools and cannot "
-        "see your files: put the exact error text, relevant code and what you already tried "
-        "in `question`. After opening, continue with advisor_call_say and finish with "
-        "advisor_call_hangup."
+        "Get a second opinion from a stronger senior model on a hard problem. The user must "
+        "approve the call. Use it when you are stuck after real attempts, facing an "
+        "architecture or debugging decision with costly consequences, or when the user asks "
+        "you to get a second opinion. Do not use it for routine work. The advisor has no "
+        "tools and cannot see your files: put the exact error text, relevant code and what "
+        "you already tried in `question`. After opening, continue with advisor_call_say and "
+        "finish with advisor_call_hangup."
     ),
     "parameters": {
         "type": "object",

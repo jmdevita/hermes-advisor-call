@@ -1,7 +1,7 @@
 """Shared plugin state: one Runtime per loaded plugin.
 
 Holds the call manager, ledger, captured context and the accessors for
-settings and Hermes' LLM API. Tools, hooks and the /phone command all work
+settings and Hermes' LLM API. Tools, hooks and the /second-opinion command all work
 through it, which is also what tests construct with fakes.
 """
 

@@ -141,7 +141,7 @@ def test_approvals_off_needs_grant(hooks, runtime, approvals):
     # U-26
     approvals["mode"] = False  # YAML `off`
     d = gate(hooks)
-    assert d["action"] == "block" and "/phone allow" in d["message"]
+    assert d["action"] == "block" and "/second-opinion allow" in d["message"]
     runtime.manager.grant(SID, line="sonnet", cap_usd=None)
     assert gate(hooks) is None
 

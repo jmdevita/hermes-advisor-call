@@ -34,8 +34,10 @@ def test_register_wires_everything(tmp_path, clock):
     assert all(t["schema"]["name"] == n for n, t in ctx.tools.items())
     assert set(ctx.hooks) == set(HOOKS) and all(len(v) == 1 for v in ctx.hooks.values())
     assert list(ctx.middleware) == ["llm_request"]
-    assert "phone" in ctx.commands
-    assert not ctx.commands["phone"]["args_hint"].startswith("<")  # stays in Telegram's menu
+    assert "second-opinion" in ctx.commands
+    assert not ctx.commands["second-opinion"]["args_hint"].startswith(
+        "<"
+    )  # stays in Telegram's menu
     assert ctx.system_prompt_sections == [{"args": ("advisor-call", EXECUTOR_GUIDANCE)}]
     assert ctx.auxiliary_tasks == {
         "advisor_call_sonnet": {
@@ -86,7 +88,7 @@ def test_register_does_not_touch_llm(tmp_path, clock):
 def test_command_name_fallback(tmp_path, clock):
     class Taken(FakeCtx):
         def register_command(self, name, handler, **kwargs):
-            if name == "phone":
+            if name == "second-opinion":
                 return None
             super().register_command(name, handler, **kwargs)
             return object()

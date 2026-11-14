@@ -119,16 +119,29 @@ package, `hermes_plugins.advisor_call` (hyphen becomes underscore), with
 - Exercised with a scratch package using the same loader calls:
   `hermes_plugins.advisor_call.advisor_call.core` resolved.
 
-### O-7 Is `/phone` free?
+### O-7 Command name: **`/second-opinion`** (decided 2026-11-14; was `/phone`)
 
-**Yes.** Neither `phone` nor `advisorcall` appears among the 131 built-in
-command names and aliases, and no bundled plugin uses them.
+`/phone` was free among the 131 built-in command names and aliases, but the
+plugin catalog has several plugins that make real phone calls or drive a
+real phone (`hermes-phone`, `phone-harness`, `phone-autopilot`, `call-me`),
+so `/phone` would read as "place a call". `/advisor` is taken in practice by
+the catalog's `advisor` plugin (a silent last-wins clash when both are
+installed). `second-opinion` is free among built-ins (verified with
+`resolve_command`) and in the catalog. The catalog's `calling-mom` has a
+*tool* named `second_opinion`; tools and commands are separate namespaces in
+Hermes, so this does not clash.
 
+- Registered as `second-opinion`; Telegram shows `/second_opinion`
+  (Hermes maps `-` to `_` in the menu and back on input; verified).
+- Fallback if the name is ever taken: `/advisorcall`.
 - A built-in collision would be skipped with a warning; a collision with
   another plugin is a silent last-wins overwrite.
 - Telegram: names are limited to `[a-z0-9_]{1,32}`. **A plugin command whose
   `args_hint` starts with `<` is left out of the Telegram command menu**, so
-  `/phone` uses `args_hint="[status|allow|revoke|ask|hangup|bill|transcript]"`.
+  the hint is `[status|allow|revoke|ask|hangup|bill|transcript]`.
+- The executor-facing wording changed with it: the tool description and the
+  guidance say "get a second opinion" rather than "phone". Tool names
+  (`advisor_call_*`) are unchanged.
 
 ### O-8 Does the command `source` carry the sender?
 
@@ -139,7 +152,7 @@ command names and aliases, and no bundled plugin uses them.
   `platform`. The first positional argument is `raw_args`.
 - A truthy return value becomes the reply text.
 - **Use a sync handler.** Async command results are bounded at 30 s on the
-  CLI, and `/phone ask` may wait up to the advisor timeout. Sync handlers run
+  CLI, and `/second-opinion ask` may wait up to the advisor timeout. Sync handlers run
   in an executor on the gateway.
 - Rule for `allowed_senders`: gateway uses `source.user_id`; CLI has no
   sender and is treated as the local owner, so the list does not apply. If
@@ -253,7 +266,7 @@ Bounds:
 
 Where it is labelled: each exchange row has `estimated = 1` in the ledger;
 the call carries `estimated`; the tool result's `bill` gets
-`"estimate": true`; the footer and `/phone bill` mark the amount as an
+`"estimate": true`; the footer and `/second-opinion bill` mark the amount as an
 estimate. The plugin logs a one-time warning that bills are estimated while
 Hermes hides cache counts.
 
@@ -347,7 +360,7 @@ rules skip the smart approver; no human present blocks.
   snapshot for the same session.
 - `pre_llm_call` kwargs include `sender_id` (gateway identity) and
   `platform`. Returned context is **appended to the user message and kept
-  in history** (not ephemeral). The one-time "/phone allow" notice is
+  in history** (not ephemeral). The one-time "/second-opinion allow" notice is
   therefore sent once and stays in history.
 - `transform_llm_output` kwargs: `response_text`, `session_id`, `model`,
   `platform`, `turn_id`. The first non-empty string returned replaces the
@@ -396,7 +409,7 @@ advisor-call`, `hermes plugins validate <path>` and `hermes plugins doctor
 
 - **`runtime.py`** (not in the plan's layout) holds the shared state: call
   manager, ledger, captured context, settings and `ctx.llm` accessors. Tools,
-  hooks and `/phone` all go through one `Runtime`, which tests build with
+  hooks and `/second-opinion` all go through one `Runtime`, which tests build with
   fakes.
 - **Model and provider** for each line are read from Hermes'
   `auxiliary.advisor_call_<line>` slot when set, falling back to the line's
@@ -432,11 +445,11 @@ advisor-call`, `hermes plugins validate <path>` and `hermes plugins doctor
 - **The sender check also guards `advisor_call_say`**, not only
   `advisor_call_open`, so a different sender in the same session cannot
   drive an approved call.
-- **Session ids for `/phone`.** The gateway passes the chat's current
-  session id, the same one the agent's tools and hooks see. If `/phone`
+- **Session ids for `/second-opinion`.** The gateway passes the chat's current
+  session id, the same one the agent's tools and hooks see. If `/second-opinion`
   is the first message in a new chat there is no session yet, and the
   command says to send a message first.
-- **`/phone ask`** opens a one-message call marked `initiated_by: user`,
+- **`/second-opinion ask`** opens a one-message call marked `initiated_by: user`,
   tells the advisor the message is from the user, ends the call, and
   suppresses the executor's bill footer for it. It is refused while the
   executor has a call open.

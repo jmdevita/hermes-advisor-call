@@ -1,6 +1,6 @@
-"""The /phone slash command (plan 7.8).
+"""The /second-opinion slash command (plan 7.8).
 
-The handler is sync on purpose: /phone ask waits for the advisor, and
+The handler is sync on purpose: /second-opinion ask waits for the advisor, and
 Hermes bounds async command results at 30 s on the CLI (DESIGN.md, O-8).
 """
 
@@ -20,7 +20,7 @@ from .tools import open_call
 
 log = logging.getLogger(__name__)
 
-COMMAND = "phone"
+COMMAND = "second-opinion"  # Telegram shows it as /second_opinion
 FALLBACK_COMMAND = "advisorcall"
 ARGS_HINT = "[status|allow|revoke|ask|hangup|bill|transcript]"
 DESCRIPTION = "Advisor calls: status, pre-authorize, ask directly, hang up, see the bill"
@@ -47,7 +47,7 @@ def _clip(text: str, limit: int = CHAT_LIMIT) -> str:
     return text if len(text) <= limit else text[: limit - 20].rstrip() + "\n…[truncated]"
 
 
-class PhoneCommand:
+class SecondOpinionCommand:
     def __init__(self, rt: Runtime) -> None:
         self.rt = rt
 
@@ -63,7 +63,7 @@ class PhoneCommand:
         try:
             return self.dispatch(str(raw_args or ""), session_id or None, source)
         except Exception as exc:  # noqa: BLE001 - a command must never crash the chat
-            log.exception("advisor-call: /phone failed")
+            log.exception("advisor-call: /second-opinion failed")
             return f"/{COMMAND} failed: {type(exc).__name__}: {exc}"
 
     # ----------------------------------------------------------------- dispatch

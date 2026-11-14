@@ -29,9 +29,9 @@ Rules:
 # tools sit behind tool search by default in Hermes (DESIGN.md, O-10), so
 # the guidance names the tools and says how to find them.
 EXECUTOR_GUIDANCE = """\
-You can phone a stronger advisor model with the tool `advisor_call_open`. \
-If it is not in your tool list, find it with `tool_search` (query: \
-"advisor_call") and call it through `tool_call`. Use it only for hard \
+You can get a second opinion from a stronger advisor model with the tool \
+`advisor_call_open`. If it is not in your tool list, find it with \
+`tool_search` (query: "advisor_call") and call it through `tool_call`. Use it only for hard \
 problems: you are stuck after real attempts, the same failure has repeated, \
 a decision is costly to reverse, or the user asked for a second opinion. \
 Before calling, tell the user in one sentence why. The user must approve. \

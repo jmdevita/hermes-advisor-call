@@ -151,7 +151,9 @@ class Hooks:
             and settings.approvals_mode == "off"
             and grant is None
         ):
-            return _block("Approvals are off, so advisor calls need `/phone allow` from the user.")
+            return _block(
+                "Approvals are off, so advisor calls need `/second-opinion allow` from the user."
+            )
         # 7. Pre-authorized by the user for this session.
         if grant is not None:
             return None

@@ -1,8 +1,9 @@
 # hermes-advisor-call
 
 A [Hermes Agent](https://github.com/NousResearch/hermes-agent) plugin that
-lets a cheap or local main model **phone a stronger advisor model** for a
-multi-message consult, with human approval per call and hard bill caps.
+lets a cheap or local main model **get a second opinion from a stronger
+advisor model**, as a multi-message consult with human approval per call and
+hard bill caps.
 
 > **Status: in development.** Phases 0 to 3 (verification, core logic, tools,
 > hooks and wiring) are done; live testing on a real Hermes is next. See

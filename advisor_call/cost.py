@@ -273,7 +273,7 @@ def call_cap(budget: Budget, state: BudgetState, custom_cap: float | None = None
     """Per-call bill cap, computed once when a call opens.
 
     Dynamic pacing scales the base cap by how far today's allowance is above
-    or below the baseline daily share. A custom cap from /phone allow
+    or below the baseline daily share. A custom cap from /second-opinion allow
     replaces the computed one. Never more than can be spent right now."""
     if custom_cap is not None:
         cap = custom_cap
