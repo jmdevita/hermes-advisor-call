@@ -144,3 +144,43 @@ def clock() -> FakeClock:
 @pytest.fixture
 def db_path(tmp_path):
     return tmp_path / "advisor-call.sqlite3"
+
+
+# --------------------------------------------------------------------------- runtime
+
+
+@pytest.fixture
+def config() -> dict[str, Any]:
+    """The plugin's config section; tests edit it in place (read per call)."""
+    return {"budget": {"cycle_start_day": 3}}
+
+
+@pytest.fixture
+def runtime(fake_llm, db_path, clock, config):
+    from advisor_call.ledger import Ledger
+    from advisor_call.runtime import Runtime
+    from advisor_call.settings import parse_settings
+
+    return Runtime(
+        llm=lambda: fake_llm,
+        ledger=Ledger.at_path(db_path),
+        settings=lambda: parse_settings(config),
+        clock=clock,
+        redactor=lambda: None,
+    )
+
+
+def reply(
+    text: str = "advice",
+    *,
+    input_tokens: int = 500,
+    output_tokens: int = 200,
+    cache_read: int = 0,
+    cache_write: int = 0,
+    provider: str = "anthropic",
+) -> FakeResult:
+    return FakeResult(
+        text=text,
+        provider=provider,
+        usage=FakeUsage(input_tokens, output_tokens, cache_read, cache_write),
+    )

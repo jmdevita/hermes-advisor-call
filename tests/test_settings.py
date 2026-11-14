@@ -116,3 +116,15 @@ def test_non_mapping_root():
     s = parse_settings(["not", "a", "mapping"])
     assert s.default_line == "sonnet"
     assert s.warnings
+
+
+def test_auxiliary_slot_sets_model_and_provider():
+    aux = {
+        "advisor_call_sonnet": {"provider": "openrouter", "model": "anthropic/x"},
+        "other": "junk",
+    }
+    line = parse_settings(VALID, aux).line("sonnet")
+    assert (line.provider, line.model) == ("openrouter", "anthropic/x")
+    plain = parse_settings(VALID, {"advisor_call_sonnet": {"timeout": 9}}).line("sonnet")
+    assert (plain.provider, plain.model) == ("anthropic", "claude-sonnet-5-5")
+    assert parse_settings(VALID, "not a dict").line("sonnet").model == "claude-sonnet-5-5"

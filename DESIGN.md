@@ -384,3 +384,25 @@ advisor-call`, `hermes plugins validate <path>` and `hermes plugins doctor
   masked. A small built-in redactor is used only if Hermes' cannot be
   imported.
 - **Ledger file** is `plugin-data/advisor-call/ledger.db`.
+
+## 4. Implementation notes (Phase 2)
+
+- **`runtime.py`** (not in the plan's layout) holds the shared state: call
+  manager, ledger, captured context, settings and `ctx.llm` accessors. Tools,
+  hooks and `/phone` all go through one `Runtime`, which tests build with
+  fakes.
+- **Model and provider** for each line are read from Hermes'
+  `auxiliary.advisor_call_<line>` slot when set, falling back to the line's
+  defaults. The provider is what a reply is checked against (section 2.4).
+- **Redaction covers executor messages too**, not only the opening
+  transcript: every `advisor_call_say` message and the opening question pass
+  through the redactor, since all of it leaves the machine.
+- **A failed opening exchange ends the call** with reason `error`, so no call
+  is left open without its transcript. The executor is told it may open
+  again (which asks for approval again unless the session was approved).
+- **No usage reported on a successful reply** bills the pre-flight upper
+  bound, flagged as an estimate. A failure with no usage is not billed; a
+  failure with usage (for example an empty reply) is.
+- **Restart detection.** A call row is written to the ledger when the call
+  opens. After a gateway restart, `advisor_call_say` with that `call_id`
+  finds the open row and reports "call dropped (gateway restarted)".

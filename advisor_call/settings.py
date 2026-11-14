@@ -248,9 +248,30 @@ def _line(name: str, raw: Any, w: _Collector) -> Line:
     return Line(name=name, provider=str(provider), model=str(model), prices=prices, problem=problem)
 
 
-def parse_settings(raw: Any) -> Settings:
+def _apply_auxiliary(line: Line, auxiliary: Any) -> Line:
+    """The model and provider actually configured in Hermes' auxiliary slot
+    for this line win over the line's own defaults."""
+    if not isinstance(auxiliary, dict):
+        return line
+    slot = auxiliary.get(line.task_key)
+    if not isinstance(slot, dict):
+        return line
+    provider = slot.get("provider")
+    model = slot.get("model")
+    return Line(
+        name=line.name,
+        provider=str(provider) if isinstance(provider, str) and provider else line.provider,
+        model=str(model) if isinstance(model, str) and model else line.model,
+        prices=line.prices,
+        problem=line.problem,
+    )
+
+
+def parse_settings(raw: Any, auxiliary: Any = None) -> Settings:
     """Merge the user's ``plugins.entries.advisor-call`` mapping over the
-    defaults and validate it. Never raises; problems become warnings."""
+    defaults and validate it. ``auxiliary`` is Hermes' ``auxiliary`` config
+    block, used for each line's effective model and provider. Never raises;
+    problems become warnings."""
     w = _Collector()
     if raw is None:
         raw = {}
@@ -264,7 +285,7 @@ def parse_settings(raw: Any) -> Settings:
     elif not isinstance(lines_raw, dict) or not lines_raw:
         w.warn("lines must be a non-empty mapping; using the default sonnet line")
         lines_raw = copy.deepcopy(DEFAULT_LINES)
-    lines = {str(n): _line(str(n), v, w) for n, v in lines_raw.items()}
+    lines = {str(n): _apply_auxiliary(_line(str(n), v, w), auxiliary) for n, v in lines_raw.items()}
 
     default_line = raw.get("default_line") or DEFAULTS["default_line"]
     if not isinstance(default_line, str) or default_line not in lines:
@@ -395,10 +416,12 @@ def read_settings() -> Settings:
     try:
         from hermes_cli.config import load_config_readonly
 
-        section = copy.deepcopy(plugin_section(load_config_readonly()))
+        config = load_config_readonly()
+        section = copy.deepcopy(plugin_section(config))
+        auxiliary = copy.deepcopy(config.get("auxiliary")) if isinstance(config, dict) else None
     except Exception as exc:  # noqa: BLE001 - config read must never break a turn
         log.warning("advisor-call: could not read config (%s); spending is refused", exc)
-        section = None
-    settings = parse_settings(section)
+        section = auxiliary = None
+    settings = parse_settings(section, auxiliary)
     _log_once(settings.warnings)
     return settings
