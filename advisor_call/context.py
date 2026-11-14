@@ -25,7 +25,7 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-MAX_SESSIONS = 64
+MAX_SESSIONS = 256
 TOOL_ARGS_CHARS = 400
 OMITTED_PREFIX = "...[earlier conversation omitted]...\n"
 ADVISOR_TOOL_PREFIX = "advisor_call_"
@@ -48,6 +48,7 @@ class SessionContext:
     request: Snapshot | None = None
     sender_id: str = ""
     platform: str = ""
+    seen: bool = False  # pre_llm_call has run for this session
 
     def latest(self) -> list[Any]:
         candidates = [s for s in (self.hook, self.request) if s is not None]
@@ -98,6 +99,7 @@ class ContextStore:
         with self._lock:
             ctx = self._get(session_id)
             ctx.hook = Snapshot(history, next(self._seq))
+            ctx.seen = True
             if sender_id:
                 ctx.sender_id = str(sender_id)
             if platform:
@@ -117,6 +119,15 @@ class ContextStore:
         with self._lock:
             ctx = self._sessions.get(session_id)
             return ctx.latest() if ctx else []
+
+    def identity(self, session_id: str | None) -> tuple[str, str] | None:
+        """(sender_id, platform) for a session seen by pre_llm_call, or None
+        when this session has not been seen (or was evicted)."""
+        if not session_id:
+            return None
+        with self._lock:
+            ctx = self._sessions.get(session_id)
+            return (ctx.sender_id, ctx.platform) if ctx is not None and ctx.seen else None
 
     def sender(self, session_id: str | None) -> tuple[str, str]:
         """(sender_id, platform), empty strings when unknown."""
@@ -167,41 +178,49 @@ def _tool_call_name_args(tc: Any) -> tuple[str, str]:
     return str(name), _args_text(args)
 
 
-def _parts_text(content: Any, tool_chars: int, skip_ids: set[str]) -> list[str]:
-    """Render a content value: a string or a list of parts/blocks."""
+def _same(text: str) -> str:
+    return text
+
+
+def _parts_text(
+    content: Any, tool_chars: int, skip_ids: set[str], clean: Redactor = _same
+) -> list[str]:
+    """Render a content value: a string or a list of parts/blocks. Every
+    piece is redacted (clean) before anything cuts it, so a cut can never
+    split a secret and leave part of it unrecognisable."""
     if content is None:
         return []
     if isinstance(content, str):
-        return [content] if content else []
+        return [clean(content)] if content else []
     if not isinstance(content, list):
-        return [str(content)]
+        return [clean(str(content))]
     out: list[str] = []
     for part in content:
         if isinstance(part, str):
-            out.append(part)
+            out.append(clean(part))
             continue
         if not isinstance(part, dict):
             continue
         kind = part.get("type")
         if kind in ("text", "input_text", "output_text"):
             if part.get("text"):
-                out.append(str(part["text"]))
+                out.append(clean(str(part["text"])))
         elif kind in ("image", "image_url", "input_image"):
             out.append("[image]")
         elif kind == "tool_use":  # Anthropic-style assistant block
             if part.get("id") in skip_ids:
                 continue
-            args = _short(_args_text(part.get("input", "")), TOOL_ARGS_CHARS)
+            args = _short(clean(_args_text(part.get("input", ""))), TOOL_ARGS_CHARS)
             out.append(f"[tool call] {part.get('name', '?')}({args})")
         elif kind == "tool_result":  # Anthropic-style user block
             if part.get("tool_use_id") in skip_ids:
                 continue
-            inner = "\n".join(_parts_text(part.get("content"), tool_chars, skip_ids))
+            inner = "\n".join(_parts_text(part.get("content"), tool_chars, skip_ids, clean))
             out.append(f"[tool result]\n{_cut_middle(inner, tool_chars)}")
         elif kind in ("thinking", "redacted_thinking"):
             continue
         elif part.get("text"):
-            out.append(str(part["text"]))
+            out.append(clean(str(part["text"])))
     return out
 
 
@@ -241,9 +260,10 @@ def render_transcript(
 
     System messages are skipped, tool output is cut in the middle to
     tool_chars, the in-flight advisor tool call is left out, and when the
-    total is over limit_chars the tail is kept. Redaction runs last, over
-    the final text."""
+    total is over limit_chars the tail is kept. Redaction runs on every
+    piece before any cut, and once more over the final text."""
     skip_ids = _in_flight_advisor_ids(messages)
+    clean: Redactor = redact or _same
     blocks: list[str] = []
     for msg in messages:
         if not isinstance(msg, dict):
@@ -254,17 +274,17 @@ def render_transcript(
         if role == "tool":
             if str(msg.get("tool_call_id", "")) in skip_ids:
                 continue
-            body = "\n".join(_parts_text(msg.get("content"), tool_chars, skip_ids))
+            body = "\n".join(_parts_text(msg.get("content"), tool_chars, skip_ids, clean))
             name = msg.get("name")
             label = f"### TOOL RESULT{f' ({name})' if name else ''}"
             blocks.append(f"{label}\n{_cut_middle(body, tool_chars)}")
             continue
-        lines = _parts_text(msg.get("content"), tool_chars, skip_ids)
+        lines = _parts_text(msg.get("content"), tool_chars, skip_ids, clean)
         for tc in msg.get("tool_calls") or []:
             if isinstance(tc, dict) and str(tc.get("id", "")) in skip_ids:
                 continue
             name, args = _tool_call_name_args(tc)
-            lines.append(f"[tool call] {name}({_short(args, TOOL_ARGS_CHARS)})")
+            lines.append(f"[tool call] {name}({_short(clean(args), TOOL_ARGS_CHARS)})")
         if not lines:
             continue
         blocks.append(f"### {role.upper()}\n" + "\n".join(lines))

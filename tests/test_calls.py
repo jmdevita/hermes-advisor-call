@@ -290,11 +290,13 @@ def test_cached_prefix_tracked_on_success_and_cleared_on_failure(clock):
         usage=Usage(),
         ok=True,
         estimated=True,
-        cached_prefix_chars=12_345,
+        cached_prefix_est=12_345.0,
+        token_scale=1.4,
     )
-    assert (call.cached_chars, call.cached_at) == (12_345, clock.time())
+    assert (call.cached_est, call.cached_at) == (12_345.0, clock.time())
+    assert call.token_scale == 1.4
     assert call.estimated
     res = mgr.reserve("s1", None, "q2", ok_preflight())
     mgr.settle(res, reply=None, cost_usd=0.0, usage=Usage(), ok=False)
-    assert (call.cached_chars, call.cached_at) == (0, None)
+    assert (call.cached_est, call.cached_at) == (0.0, None)
     assert call.estimated  # stays marked once any part was estimated

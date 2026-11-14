@@ -140,7 +140,26 @@ def test_redaction_hook_applied_last():
         return text.replace("hunter2", "[REDACTED]")
 
     text = render([{"role": "user", "content": "password is hunter2"}], redact=redact)
-    assert "hunter2" not in text and len(seen) == 1
+    assert "hunter2" not in text and seen  # each piece, then the final text
+
+
+def test_secret_split_by_a_cut_is_still_redacted():
+    # Review finding 4: redaction runs before any cut.
+    secret = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
+    body = "x" * 995 + " " + secret + " " + "y" * 973  # the cut falls inside the token
+    msgs = [
+        {"role": "tool", "tool_call_id": "t", "content": body},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {"id": "c", "function": {"name": "f", "arguments": "a" * 390 + " " + secret}}
+            ],
+        },
+    ]
+    out = render(msgs, tool=2_000, redact=fallback_redact)
+    for i in range(len(secret) - 8):
+        assert secret[i : i + 8] not in out
 
 
 def test_fallback_redactor():

@@ -110,7 +110,7 @@ plugins:
         max_tokens: 4000            # reply limit per message
         timeout_seconds: 180
         cache_ttl: 5m               # 5m | 1h | off
-      allowed_senders: []           # platform user IDs allowed to spend; [] = anyone the gateway admits
+      allowed_senders: []           # gateway user IDs allowed to spend; [] = anyone the gateway admits
       bill_footer: true
       log_transcripts: false
 ```
@@ -176,7 +176,8 @@ dangerous shell commands:
   told not to retry.
 
 To skip the prompt for a session, type `/second-opinion allow` (optionally
-with a line and a cap). Calls with no human present (cron, unattended
+with a line and a cap). It covers one line: the default line, or the one you
+name. Calls with no human present (cron, unattended
 platforms) are blocked by Hermes unless you configured those to
 auto-approve.
 
@@ -185,12 +186,16 @@ auto-approve.
 | Command | What it does |
 |---|---|
 | `/second-opinion` or `/second-opinion status` | Line and model, the open call, today's spend against today's allowance, this cycle's spend, the cycle window, whether this session is pre-authorized |
-| `/second-opinion allow [line] [$cap]` | Pre-authorize calls for this session, optionally with a per-call cap (limited to what is left today). The executor is told on its next turn |
+| `/second-opinion allow [line] [$cap]` | Pre-authorize calls on one line (default: the default line) for this session, optionally with a per-call cap (limited to what is left today). The executor is told on its next turn |
 | `/second-opinion revoke` | Remove the pre-authorization |
 | `/second-opinion ask <question>` | Ask the advisor yourself: one message with the session transcript. No approval prompt, since you typed it; counts toward the budget |
 | `/second-opinion hangup` | End the open call now; the executor is told on its next message |
 | `/second-opinion bill` | Today, this cycle, days left, and the last 7 days |
 | `/second-opinion transcript` | The last call in this session, from memory |
+
+With a non-empty `allowed_senders`, `allow`, `ask` and `transcript` are
+limited to those gateway users, and so are the executor's advisor calls in
+their sessions. Local CLI and TUI sessions are treated as the owner.
 
 In Telegram the command appears as `/second_opinion`. If the name is taken by
 another plugin, it is registered as `/advisorcall` instead.
@@ -200,12 +205,16 @@ another plugin, it is registered as `/advisorcall` instead.
 With prompt caching off, the bill is exact. **With caching on (the default),
 the bill is an estimate**, marked `~` and "(estimate)": Hermes v0.23.1 does
 not pass Anthropic's cache token counts to plugins. The plugin estimates the
-cached part on the safe side, above the real cost and close to what the call
-would cost without caching. See [DESIGN.md](DESIGN.md) section 2.1 for how,
-and set `advisor.cache_ttl: off` if you want an exact bill.
+cached part on the safe side: for ordinary text, above the real cost and
+close to what the call would cost without caching. See
+[DESIGN.md](DESIGN.md) section 2.1 for how, and set `advisor.cache_ttl: off`
+if you want an exact bill.
 
-A 10-message call with a 40,000-character opening is estimated at about
-$0.42 (real cost about $0.16 with caching, about $0.40 without).
+A 10-message call in English with a 40,000-character opening is estimated
+at about $0.40 (real cost about $0.15 with caching, about $0.40 without).
+
+A request that times out is billed at its pre-send estimate, because it may
+have been processed and billed anyway.
 
 ## Privacy and security
 
@@ -237,10 +246,11 @@ $0.42 (real cost about $0.16 with caching, about $0.40 without).
   `/second-opinion allow`, but it cannot detect YOLO or `-z`. **The bill
   caps still apply in every case.**
 - **A cap can be overshot by part of one message.** Before each message the
-  plugin checks an estimate that assumes a full-length reply and about 3
-  characters per token. Unusually dense text (for example CJK or minified
-  code) can make the real cost of that message higher than the estimate.
-  After any message that reaches the cap, the call ends.
+  plugin checks an estimate that assumes a full-length reply and counts
+  tokens on the high side by kind of character (letters, digits and
+  punctuation, CJK, emoji). Text denser than that can make one message cost
+  more than estimated. After any message that reaches the cap the call
+  ends, and later checks on the same call scale up to the density measured.
 - **Only this plugin's spend is counted.** The budget assumes the whole
   `per_month_usd` is available. Spend from other tools on the same API key
   or Console organization, or from before installing mid-cycle, is

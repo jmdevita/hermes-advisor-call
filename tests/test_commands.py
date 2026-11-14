@@ -6,7 +6,7 @@ import pytest
 from conftest import reply
 
 from advisor_call.commands import USAGE, SecondOpinionCommand
-from advisor_call.tools import OPEN, SAY, TOOLS, make_handler
+from advisor_call.tools import OPEN, SAY
 
 SID = "session-1"
 
@@ -14,11 +14,6 @@ SID = "session-1"
 @pytest.fixture
 def cmd(runtime):
     return SecondOpinionCommand(runtime)
-
-
-@pytest.fixture
-def tools(runtime):
-    return {name: make_handler(runtime, fn) for name, _, fn, _ in TOOLS}
 
 
 def run(cmd, args="", session_id=SID, source=None):

@@ -73,10 +73,13 @@ class SecondOpinionCommand:
         sub = words[0].lower() if words else "status"
         rest = words[1] if len(words) > 1 else ""
         settings = self.rt.settings()
-        spends = sub in ("allow", "ask")
-        if spends and source is not None:
-            sender = _sender(source)
-            if settings.allowed_senders and (not sender or not sender_allowed(settings, sender)):
+        # Subcommands that spend money or show the advisor conversation are
+        # limited to allowed_senders on the gateway. CLI and TUI have no
+        # source and are the local owner.
+        guarded = sub in ("allow", "ask", "transcript")
+        if guarded and source is not None:
+            identity = (_sender(source), "gateway")
+            if not sender_allowed(settings, identity):
                 return "You are not allowed to use advisor calls."
         handler = {
             "status": self.status,
@@ -218,7 +221,13 @@ class SecondOpinionCommand:
         framed = f"(This message is from the user, asking you directly.)\n{question}"
         result = open_call(self.rt, {"question": framed}, session_id, initiated_by="user")
         call = self.rt.manager.latest(session_id)
-        if call is not None and call.is_open and call.initiated_by == "user":
+        if call is not None and call.initiated_by != "user":
+            # The executor opened a call between the check above and ours.
+            return (
+                f"The executor opened a call meanwhile ({call.call_id}). /{COMMAND} "
+                "hangup first, then ask."
+            )
+        if call is not None and call.is_open:
             self.rt.manager.end(session_id, "hangup", call.call_id)
         self.rt.manager.take_activity(session_id)  # no executor footer for the user's own ask
         if "error" in result and "reply" not in result:

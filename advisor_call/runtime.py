@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import threading
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 from typing import Any
 
@@ -49,6 +51,11 @@ class Runtime:
         self._redactor_factory = redactor
         self._redactor: Redactor | None = None
         self.manager = CallManager(clock=self.clock.time, on_call_end=self._persist_call)
+        self._lock = threading.Lock()
+        # One-shot authorizations left by the approval hook, per session.
+        self._authorizations: OrderedDict[str, tuple[str, float]] = OrderedDict()
+        # Spend that could not be written to the ledger, per local day.
+        self._unrecorded: dict[dt.date, float] = {}
 
     # ----------------------------------------------------------------- accessors
 
@@ -68,7 +75,43 @@ class Runtime:
     def today(self) -> dt.date:
         return self.clock.today()
 
+    # ----------------------------------------------------------------- authorization
+
+    AUTHORIZATION_TTL_S = 15 * 60.0  # longer than Hermes' approval timeout (300 s)
+
+    def authorize(self, session_id: str, kind: str) -> None:
+        """Record what the approval hook decided for the next advisor_call_open
+        in this session: "approved" (a human approval was requested), "grant"
+        (a matching /second-opinion allow), or "existing" (a call was open)."""
+        with self._lock:
+            self._authorizations[session_id] = (kind, self.clock.time())
+            self._authorizations.move_to_end(session_id)
+            while len(self._authorizations) > 256:
+                self._authorizations.popitem(last=False)
+
+    def take_authorization(self, session_id: str) -> str | None:
+        with self._lock:
+            entry = self._authorizations.pop(session_id, None)
+        if entry is None:
+            return None
+        kind, at = entry
+        return kind if self.clock.time() - at <= self.AUTHORIZATION_TTL_S else None
+
     # ----------------------------------------------------------------- budget
+
+    def add_unrecorded(self, cost_usd: float) -> None:
+        """Spend the ledger could not store. Counted until the process stops."""
+        if cost_usd > 0:
+            with self._lock:
+                day = self.today()
+                self._unrecorded[day] = self._unrecorded.get(day, 0.0) + cost_usd
+
+    def _unrecorded_split(self, today: dt.date, cycle_start: dt.date) -> tuple[float, float]:
+        with self._lock:
+            items = list(self._unrecorded.items())
+        on_day = sum(v for d, v in items if d == today)
+        before = sum(v for d, v in items if cycle_start <= d < today)
+        return on_day, before
 
     def budget(self, settings: Settings) -> BudgetState:
         """Raises ValueError when cycle_start_day is unset and LedgerError
@@ -79,6 +122,9 @@ class Runtime:
         today = self.today()
         cycle = cycle_for(today, budget.cycle_start_day)
         spent_today, spent_before = self.ledger.totals(today, cycle.start)
+        extra_today, extra_before = self._unrecorded_split(today, cycle.start)
+        spent_today += extra_today
+        spent_before += extra_before
         return budget_state(budget, today, spent_today=spent_today, spent_before_today=spent_before)
 
     def bill(self, call: Call, settings: Settings) -> dict[str, Any]:

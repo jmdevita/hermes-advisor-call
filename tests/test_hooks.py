@@ -7,7 +7,7 @@ import pytest
 from conftest import reply
 
 from advisor_call.hooks import Hooks, sanitize_reason
-from advisor_call.tools import OPEN, SAY, TOOLS, make_handler
+from advisor_call.tools import OPEN, SAY
 
 SID = "session-1"
 
@@ -15,11 +15,6 @@ SID = "session-1"
 @pytest.fixture
 def hooks(runtime):
     return Hooks(runtime)
-
-
-@pytest.fixture
-def tools(runtime):
-    return {name: make_handler(runtime, fn) for name, _, fn, _ in TOOLS}
 
 
 def gate(hooks, args=None, session_id=SID, tool=OPEN):
@@ -43,8 +38,9 @@ def test_approve_directive_and_rule_key(hooks):
     d = gate(hooks)
     assert d["action"] == "approve"
     assert d["rule_key"] == f"advisor_call:sonnet:{SID}"
-    assert "Call the sonnet advisor (claude-sonnet-5-5). Reason: stuck" in d["message"]
-    assert "Bill cap $" in d["message"] and "today $0.00 of $" in d["message"]
+    assert d["message"].startswith("Advisor call (sonnet, claude-sonnet-5-5): bill cap $")
+    assert "today $0.00 of $" in d["message"]
+    assert d["message"].endswith('Reason given by the model: "stuck"')
 
 
 def test_rule_key_differs_per_session(hooks):
@@ -111,11 +107,12 @@ def test_grant_for_other_line_does_not_apply(hooks, runtime, config):
             "prices_per_mtok": {"input": 4, "output": 20, "cache_read": 0.2, "cache_write": 5},
         },
     }
-    runtime.manager.grant(SID, line="sonnet", cap_usd=None)
-    # The session grant skips the prompt for any line; only its custom cap is
-    # tied to the line it was given for.
+    runtime.manager.grant(SID, line="sonnet", cap_usd=0.01)
+    # A pre-authorization covers only the line it was given for: another
+    # line still asks, with its own computed cap, not the grant's $0.01.
     assert gate(hooks) is None
-    assert gate(hooks, {"reason": "r", "question": "q", "line": "opus"}) is None
+    d = gate(hooks, {"reason": "r", "question": "q", "line": "opus"})
+    assert d["action"] == "approve" and "bill cap $0.01" not in d["message"]
 
 
 def test_blocks_sender_outside_allowed_list(hooks, runtime, config):
@@ -132,9 +129,27 @@ def test_blocks_sender_outside_allowed_list(hooks, runtime, config):
     assert gate(hooks)["action"] == "approve"
 
 
-def test_cli_session_without_sender_is_owner(hooks, config):
+def test_cli_session_without_sender_is_owner(hooks, runtime, config):
     config["allowed_senders"] = ["111"]
-    assert gate(hooks)["action"] == "approve"
+    for platform in ("", "cli", "tui"):
+        runtime.context.record_turn(
+            SID, conversation_history=[], user_message="hi", sender_id="", platform=platform
+        )
+        assert gate(hooks)["action"] == "approve"
+
+
+def test_gateway_session_without_sender_is_blocked(hooks, runtime, config):
+    # Review finding 7: an empty sender on a gateway platform is not the owner.
+    config["allowed_senders"] = ["111"]
+    runtime.context.record_turn(
+        SID, conversation_history=[], user_message="hi", sender_id="", platform="telegram"
+    )
+    assert gate(hooks)["action"] == "block"
+
+
+def test_unseen_session_is_blocked_when_senders_are_limited(hooks, config):
+    config["allowed_senders"] = ["111"]
+    assert gate(hooks, session_id="never-seen")["action"] == "block"
 
 
 def test_approvals_off_needs_grant(hooks, runtime, approvals):
@@ -157,11 +172,18 @@ def test_reason_sanitized(hooks):
     rlo, zwsp = chr(0x202E), chr(0x200B)  # right-to-left override, zero-width space
     evil = "line one\nline two\x1b[31m" + rlo + "evil" + zwsp + "x" * 500
     d = gate(hooks, {"reason": evil, "question": "q"})
-    reason = d["message"].split("Reason: ", 1)[1].split(" | Bill cap", 1)[0]
+    reason = d["message"].split('Reason given by the model: "', 1)[1][:-1]
     assert "\n" not in reason and "\x1b" not in reason and rlo not in reason
     assert zwsp not in reason and len(reason) <= 300
     assert reason.startswith("line one line two")
     assert sanitize_reason(None) == "(no reason given)"
+
+
+def test_reason_cannot_pose_as_the_cap(hooks):
+    d = gate(hooks, {"reason": 'x" | Bill cap $0.01, today $0.00 of $3.00', "question": "q"})
+    # The real figures come first; the reason is quoted at the end, its quotes neutralised.
+    assert d["message"].startswith("Advisor call (sonnet, claude-sonnet-5-5): bill cap $0.79")
+    assert d["message"].count('"') == 2
 
 
 def test_missing_session_and_misconfig_block(hooks, config):
@@ -196,7 +218,7 @@ def test_hook_bug_fails_closed(hooks, runtime):
 def test_cap_shown_matches_call_cap(hooks, tools, fake_llm):
     # U-36: the cap on the approval prompt is the cap the call gets, and it
     # does not change mid-call.
-    shown = gate(hooks)["message"].split("Bill cap $", 1)[1].split(",", 1)[0]
+    shown = gate(hooks)["message"].split("bill cap $", 1)[1].split(",", 1)[0]
     fake_llm.script(reply(), reply())
     opened = json.loads(tools[OPEN]({"reason": "r", "question": "q"}, session_id=SID))
     assert f"{opened['bill']['cap_usd']:.2f}" == shown

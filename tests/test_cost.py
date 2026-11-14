@@ -8,14 +8,15 @@ import pytest
 from advisor_call.cost import (
     Usage,
     budget_state,
+    calibration,
     call_cap,
     charge,
     cycle_for,
     estimate_cost,
+    estimate_tokens,
     exact_cost,
     preflight_refusal,
-    reusable_prefix_chars,
-    tokens_per_char,
+    reusable_prefix,
 )
 from advisor_call.settings import Prices, parse_settings
 
@@ -39,93 +40,101 @@ def test_exact_cost_hand_computed():
 
 
 def test_charge_exact_when_caching_off():
-    c = charge(Usage(12_000, 800), SONNET, caching=False, prompt_chars=40_000)
+    c = charge(Usage(12_000, 800), SONNET, caching=False, prompt_est=13_000)
     assert c.cost_usd == pytest.approx((12_000 * 2 + 800 * 10) / 1e6)
     assert not c.estimated
 
 
 def test_charge_uses_reported_cache_counts():
     u = Usage(100, 800, cache_read_tokens=12_000, cache_write_tokens=50)
-    c = charge(u, SONNET, caching=True, prompt_chars=40_000)
+    c = charge(u, SONNET, caching=True, prompt_est=13_000)
     assert c.cost_usd == pytest.approx(exact_cost(u, SONNET))
     assert not c.estimated
 
 
 def test_charge_estimate_first_exchange_all_written():
-    # Nothing reused and no tail to measure: the cached part is sized at the
-    # high default ratio (chars/3) and billed as a cache write.
-    c = charge(Usage(100, 800), SONNET, caching=True, prompt_chars=30_000)
-    written = 30_000 // 3 + 1
-    assert c.cost_usd == pytest.approx((100 * 2 + written * 2.5 + 800 * 10) / 1e6)
+    # Nothing reused and no tail to calibrate on: the cached part is the
+    # unscaled estimate, billed as a cache write.
+    c = charge(Usage(3, 500), SONNET, caching=True, prompt_est=10_000)
+    assert c.cost_usd == pytest.approx((3 * 2 + 10_000 * 2.5 + 500 * 10) / 1e6)
     assert c.estimated
 
 
 def test_charge_estimate_reused_prefix_at_input_price():
-    # 30,000 chars: 24,000 reused, 4,000 newly cached, 2,000 uncached tail
-    # that Hermes reported as 500 tokens (4 chars per token).
+    # Estimated 10,000 tokens: 8,000 reused, 600 uncached tail that Hermes
+    # reported as 450 tokens (scale 0.75).
     c = charge(
-        Usage(500, 800),
-        SONNET,
-        caching=True,
-        prompt_chars=30_000,
-        uncached_chars=2_000,
-        reused_chars=24_000,
+        Usage(450, 800), SONNET, caching=True, prompt_est=10_000, uncached_est=600, reused_est=8_000
     )
-    reused = 24_000 // 4
-    written = 28_000 // 4 + 1 - reused
-    expected = ((500 + reused) * 2.0 + written * 2.5 + 800 * 10) / 1e6
+    cached = (10_000 - 600) * 0.75
+    reused = 8_000 * 0.75
+    expected = ((450 + reused) * 2.0 + (cached - reused) * 2.5 + 800 * 10) / 1e6
     assert c.cost_usd == pytest.approx(expected)
     assert c.estimated
 
 
-def test_token_ratio_calibration_is_clamped():
-    assert tokens_per_char(500, 2_000) == pytest.approx(0.25)
-    assert tokens_per_char(100, 2_000) == pytest.approx(0.25)  # never sparser than chars/4
-    assert tokens_per_char(1_000, 1_000) == pytest.approx(0.5)  # capped
-    assert tokens_per_char(700, 2_000) == pytest.approx(0.35)
-    assert tokens_per_char(50, 100) == pytest.approx(1 / 3)  # tail too short to measure
-    assert tokens_per_char(0, 5_000) == pytest.approx(1 / 3)
+def test_calibration_is_clamped():
+    assert calibration(450, 600) == pytest.approx(0.75)
+    assert calibration(100, 600) == pytest.approx(0.75)  # never below the floor
+    assert calibration(5_000, 600) == pytest.approx(3.0)  # capped
+    assert calibration(900, 600) == pytest.approx(1.5)  # denser than estimated: bill more
+    assert calibration(40, 50) == 1.0  # tail too short to measure
+    assert calibration(0, 5_000) == 1.0
 
 
 def test_unexpected_miss_undercount_is_bounded():
     # We expected a cache hit on the reused prefix, but the cache missed:
     # really the prefix was written again (2.50), we billed it at 2.00.
-    chars, uncached, reused_chars = 60_000, 2_000, 50_000
-    reported = Usage(500, 800)  # tail measured at 4 chars per token
+    reported = Usage(450, 800)
     billed = charge(
-        reported,
-        SONNET,
-        caching=True,
-        prompt_chars=chars,
-        uncached_chars=uncached,
-        reused_chars=reused_chars,
+        reported, SONNET, caching=True, prompt_est=20_000, uncached_est=600, reused_est=16_000
     ).cost_usd
-    real = exact_cost(Usage(500, 800, 0, (chars - uncached) // 4), SONNET)
-    reused_tokens = reused_chars // 4
-    assert 0 < real - billed <= reused_tokens * (2.5 - 2.0) / 1e6 + 1e-9
+    real_cached = (20_000 - 600) * 0.75  # the calibration was right about density
+    real = exact_cost(Usage(450, 800, 0, int(real_cached)), SONNET)
+    reused_tokens = 16_000 * 0.75
+    assert 0 < real - billed <= reused_tokens * (2.5 - 2.0) / 1e6 + 1e-6
 
 
 def test_no_estimate_when_nothing_cached():
-    c = charge(Usage(1_000, 10), SONNET, caching=True, prompt_chars=3_000, uncached_chars=3_000)
+    c = charge(Usage(1_000, 10), SONNET, caching=True, prompt_est=900, uncached_est=900)
     assert not c.estimated
 
 
 def test_reusable_prefix_ttl():
-    assert reusable_prefix_chars(1_000, 100.0, 200.0, "5m") == 1_000
-    assert reusable_prefix_chars(1_000, 100.0, 100.0 + 271, "5m") == 0  # inside the margin
-    assert reusable_prefix_chars(1_000, 100.0, 100.0 + 3000, "1h") == 1_000
-    assert reusable_prefix_chars(1_000, 100.0, 101.0, "off") == 0
-    assert reusable_prefix_chars(1_000, None, 101.0, "5m") == 0
-    assert reusable_prefix_chars(0, 100.0, 101.0, "5m") == 0
+    assert reusable_prefix(1_000, 100.0, 200.0, "5m") == 1_000
+    assert reusable_prefix(1_000, 100.0, 100.0 + 271, "5m") == 0  # inside the margin
+    assert reusable_prefix(1_000, 100.0, 100.0 + 3000, "1h") == 1_000
+    assert reusable_prefix(1_000, 100.0, 101.0, "off") == 0
+    assert reusable_prefix(1_000, None, 101.0, "5m") == 0
+    assert reusable_prefix(0, 100.0, 101.0, "5m") == 0
+
+
+def test_estimate_tokens_by_kind_of_character():
+    assert estimate_tokens("abc def") == pytest.approx(7 / 3)  # ASCII letters and spaces
+    assert estimate_tokens("1,2") == pytest.approx(3 / 1.5)  # digits and punctuation
+    assert estimate_tokens("漢字") == pytest.approx(3.0)  # CJK: 1.5 each
+    assert estimate_tokens(chr(0x1F600)) == pytest.approx(3.0)  # an emoji
+    assert estimate_tokens("") == 0
+
+
+def test_dense_text_is_not_underestimated():
+    # 30,000 CJK characters are about 30,000 to 40,000 real tokens.
+    assert estimate_tokens("漢" * 30_000) >= 40_000
+    # Base64-like text: mostly letters with digits and symbols.
+    import base64
+
+    b64 = base64.b64encode(bytes(range(256)) * 40).decode()
+    assert estimate_tokens(b64) >= len(b64) / 3
 
 
 def simulate(
     messages=10, *, opening=40_000, q=2_000, r=3_200, system=1_500, out=800, chars_per_token=4.0
 ):
-    """A call where Hermes reports only the uncached tail (the newest
-    question) as input. Returns (billed, real, caching_off_real)."""
+    """A call on English text (real ~4 chars per token, estimated 3) where
+    Hermes reports only the uncached tail (the newest question) as input.
+    Returns (billed, real, caching_off_real)."""
     billed = real = off = 0.0
-    reused = 0
+    reused_est = 0.0
     prompt = system + opening
     for n in range(messages):
         if n:
@@ -136,43 +145,41 @@ def simulate(
             Usage(tail_tokens, out),
             SONNET,
             caching=True,
-            prompt_chars=prompt,
-            uncached_chars=tail,
-            reused_chars=reused,
+            prompt_est=prompt / 3,
+            uncached_est=tail / 3,
+            reused_est=reused_est,
         ).cost_usd
         total = int(prompt / chars_per_token)
-        hit = int(reused / chars_per_token)
+        hit = int(reused_est * 3 / chars_per_token)
         real += exact_cost(Usage(tail_tokens, out, hit, total - hit - tail_tokens), SONNET)
         off += exact_cost(Usage(total, out), SONNET)
-        reused = prompt - tail  # cached through the last breakpoint
+        reused_est = (prompt - tail) / 3  # cached through the last breakpoint
     return billed, real, off
 
 
 def test_worked_example_ten_messages():
-    """The 10-message example from the design discussion: the count lands
-    above the real cost, near the caching-off cost, and under the $0.50
-    default cap."""
+    """10 messages, a 40,000-character opening: the count lands above the
+    real cost, near the caching-off cost, and under the $0.50 default cap."""
     billed, real, off = simulate()
     assert real < billed < 0.50
-    assert billed <= off * 1.1  # near what the call would cost without caching
+    assert billed <= off * 1.1
     assert real == pytest.approx(0.15, abs=0.03)
-    assert billed == pytest.approx(0.42, abs=0.03)
+    assert billed == pytest.approx(0.40, abs=0.04)
 
 
 @pytest.mark.parametrize("caching", [False, True])
-@pytest.mark.parametrize("chars,out", [(40_000, 4000), (1_200, 50), (90_000, 2500)])
+@pytest.mark.parametrize("prompt_est,out", [(13_000, 4000), (400, 50), (30_000, 2500)])
 @pytest.mark.parametrize("reused_frac", [0.0, 0.8])
-def test_estimate_is_at_least_actual(caching, chars, out, reused_frac):
-    # Real token counts for English text are ~chars/4; the estimate assumes /3.
-    reused_chars = int(chars * reused_frac)
-    est = estimate_cost(chars, 4000, SONNET, caching=caching, reused_chars=reused_chars)
-    real_tokens = chars // 4
-    # Worst case for what we would bill: everything unreported, full reply.
-    worst = Usage(0, out) if caching else Usage(real_tokens, out)
+def test_estimate_is_at_least_billed(caching, prompt_est, out, reused_frac):
+    # U-3: for text the estimator does not underestimate, the pre-flight
+    # estimate is at least what the exchange is billed.
+    reused = prompt_est * reused_frac
+    est = estimate_cost(prompt_est, 4000, SONNET, caching=caching, reused_est=reused)
+    worst = Usage(0, out) if caching else Usage(int(prompt_est), out)
     billed = charge(
-        worst, SONNET, caching=caching, prompt_chars=chars, reused_chars=reused_chars
+        worst, SONNET, caching=caching, prompt_est=prompt_est, reused_est=reused
     ).cost_usd
-    assert est >= billed
+    assert est >= billed - 1e-12
 
 
 # ------------------------------------------------------------------- cycle (U-33, U-38)

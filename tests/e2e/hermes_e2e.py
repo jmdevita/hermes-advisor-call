@@ -119,7 +119,7 @@ def main() -> int:
         "approval directive",
         d.action == "approve"
         and d.rule_key == f"advisor_call:sonnet:{sid}"
-        and "Reason: stuck on the build" in (d.message or ""),
+        and 'Reason given by the model: "stuck on the build"' in (d.message or ""),
         d.message or "",
     )
 

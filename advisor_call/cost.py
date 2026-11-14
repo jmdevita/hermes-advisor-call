@@ -12,11 +12,52 @@ from typing import Any
 
 from .settings import Budget, Prices
 
-CHARS_PER_TOKEN = 3.0  # deliberately pessimistic (English is ~4)
 _MTOK = 1_000_000.0
 
 
+# --------------------------------------------------------------------------- tokens
+
+# Estimated tokens per character, by kind of character. Deliberately on the
+# high side: English prose is about 1/4 token per character, code and JSON
+# more, CJK about one token per character or more, emoji several.
+TOKENS_PER_ASCII_WORD_CHAR = 1 / 3.0  # ASCII letters and whitespace
+TOKENS_PER_ASCII_OTHER_CHAR = 1 / 1.5  # ASCII digits and punctuation
+TOKENS_PER_BMP_CHAR = 1.5  # other characters in the Basic Multilingual Plane (CJK, accents)
+TOKENS_PER_ASTRAL_CHAR = 3.0  # emoji and other characters beyond U+FFFF
+
+
+def estimate_tokens(text: str) -> float:
+    """A conservative token estimate for text. Used before a request (the
+    pre-flight check) and for the parts of a prompt Hermes does not report."""
+    word = other = bmp = astral = 0
+    for ch in text:
+        code = ord(ch)
+        if code < 128:
+            if ch.isalpha() or ch.isspace():
+                word += 1
+            else:
+                other += 1
+        elif code > 0xFFFF:
+            astral += 1
+        else:
+            bmp += 1
+    return (
+        word * TOKENS_PER_ASCII_WORD_CHAR
+        + other * TOKENS_PER_ASCII_OTHER_CHAR
+        + bmp * TOKENS_PER_BMP_CHAR
+        + astral * TOKENS_PER_ASTRAL_CHAR
+    )
+
+
 # --------------------------------------------------------------------------- usage
+
+
+def _count(value: Any) -> int:
+    try:
+        number = int(value or 0)
+    except (TypeError, ValueError, OverflowError):  # None, junk, NaN, infinity
+        return 0
+    return max(0, number)
 
 
 @dataclass
@@ -28,16 +69,26 @@ class Usage:
 
     @classmethod
     def from_result(cls, usage: Any) -> Usage:
-        """Read a Hermes PluginLlmUsage (or any object with those fields)."""
+        """Read a Hermes PluginLlmUsage (or any object with those fields).
+        Never raises: unusable values count as 0."""
 
         def g(name: str) -> int:
             try:
-                return max(0, int(getattr(usage, name, 0) or 0))
-            except (TypeError, ValueError):
+                return _count(getattr(usage, name, 0))
+            except Exception:  # noqa: BLE001 - a property that raises
                 return 0
 
         return cls(
             g("input_tokens"), g("output_tokens"), g("cache_read_tokens"), g("cache_write_tokens")
+        )
+
+    @property
+    def reported(self) -> bool:
+        return bool(
+            self.input_tokens
+            or self.output_tokens
+            or self.cache_read_tokens
+            or self.cache_write_tokens
         )
 
     def add(self, other: Usage) -> None:
@@ -68,35 +119,33 @@ CACHE_TTL_SECONDS = {"5m": 300.0, "1h": 3600.0}
 CACHE_TTL_MARGIN_SECONDS = 30.0
 
 
-def reusable_prefix_chars(
-    cached_chars: int, cached_at: float | None, now: float, cache_ttl: str
-) -> int:
-    """How much of the prompt we expect Anthropic to still have cached: the
-    prefix written by the previous successful exchange, if it is young
-    enough. Zero when caching is off or the entry has (or may have) expired."""
+def reusable_prefix(
+    cached_tokens: float, cached_at: float | None, now: float, cache_ttl: str
+) -> float:
+    """How much of the prompt (estimated tokens) we expect Anthropic to still
+    have cached: the prefix written by the previous successful exchange, if
+    it is young enough. Zero when caching is off or the entry has (or may
+    have) expired."""
     ttl = CACHE_TTL_SECONDS.get(cache_ttl)
-    if not ttl or cached_at is None or cached_chars <= 0:
-        return 0
+    if not ttl or cached_at is None or cached_tokens <= 0:
+        return 0.0
     if now - cached_at >= ttl - CACHE_TTL_MARGIN_SECONDS:
-        return 0
-    return cached_chars
+        return 0.0
+    return cached_tokens
 
 
-# Token-per-character ratio used to size the cached part of a prompt.
-DEFAULT_TOKENS_PER_CHAR = 1 / CHARS_PER_TOKEN
-MIN_TOKENS_PER_CHAR = 1 / 4.0  # never assume text is sparser than typical English
-MAX_TOKENS_PER_CHAR = 1 / 2.0
-MIN_CALIBRATION_CHARS = 400
+# The estimate of the cached part is scaled by how the estimator did on the
+# part Hermes reports exactly (the uncached tail). The scale never goes
+# below MIN_SCALE, so the estimator's built-in margin is only partly given up.
+MIN_SCALE = 0.75
+MAX_SCALE = 3.0
+MIN_CALIBRATION_TOKENS = 100.0
 
 
-def tokens_per_char(input_tokens: int, uncached_chars: int) -> float:
-    """Ratio measured on the part of the prompt Hermes did report (the
-    uncached tail after the last cache breakpoint), clamped. Falls back to
-    the deliberately high default when the tail is too short to measure."""
-    if uncached_chars < MIN_CALIBRATION_CHARS or input_tokens <= 0:
-        return DEFAULT_TOKENS_PER_CHAR
-    ratio = input_tokens / uncached_chars
-    return min(MAX_TOKENS_PER_CHAR, max(MIN_TOKENS_PER_CHAR, ratio))
+def calibration(input_tokens: int, uncached_est: float) -> float:
+    if uncached_est < MIN_CALIBRATION_TOKENS or input_tokens <= 0:
+        return 1.0
+    return min(MAX_SCALE, max(MIN_SCALE, input_tokens / uncached_est))
 
 
 def charge(
@@ -104,32 +153,31 @@ def charge(
     prices: Prices,
     *,
     caching: bool,
-    prompt_chars: int,
-    uncached_chars: int = 0,
-    reused_chars: int = 0,
+    prompt_est: float,
+    uncached_est: float = 0.0,
+    reused_est: float = 0.0,
 ) -> Charge:
-    """What to bill for one exchange.
+    """What to bill for one exchange. Arguments ending in _est are token
+    estimates from estimate_tokens().
 
     Exact when caching is off (Hermes' input_tokens is then the whole
     prompt) or when Hermes reports cache counts.
 
     Otherwise an estimate. Hermes v0.23.1 drops Anthropic's cache counts
     (DESIGN.md, O-2) and reports only the uncached tail as input. The cached
-    part (prompt_chars - uncached_chars) is sized with the token ratio
-    measured on that tail, then split using what we sent before: the reused
-    prefix (reused_chars) is billed at the normal input price, more than a
-    cache read costs; the rest at the cache-write price. An unexpected cache
-    miss under-bills only the reused prefix, by the difference between the
-    write and input prices.
+    part (prompt_est - uncached_est) is scaled by how the estimator did on
+    that tail, then split using what we sent before: the reused prefix
+    (reused_est) is billed at the normal input price, more than a cache read
+    costs; the rest at the cache-write price.
     """
     if not caching or usage.cache_read_tokens or usage.cache_write_tokens:
         return Charge(exact_cost(usage, prices), estimated=False)
-    cached_chars = max(0, prompt_chars - uncached_chars)
-    if cached_chars == 0:
+    cached = max(0.0, prompt_est - uncached_est)
+    if cached <= 0:
         return Charge(exact_cost(usage, prices), estimated=False)
-    ratio = tokens_per_char(usage.input_tokens, uncached_chars)
-    reused = int(min(reused_chars, cached_chars) * ratio)
-    written = int(cached_chars * ratio) + 1 - reused
+    scale = calibration(usage.input_tokens, uncached_est)
+    reused = min(reused_est, cached) * scale
+    written = cached * scale - reused
     cost = (
         (usage.input_tokens + reused) * prices.input
         + written * prices.cache_write
@@ -139,17 +187,15 @@ def charge(
 
 
 def estimate_cost(
-    prompt_chars: int, max_tokens: int, prices: Prices, *, caching: bool, reused_chars: int = 0
+    prompt_est: float, max_tokens: int, prices: Prices, *, caching: bool, reused_est: float = 0.0
 ) -> float:
-    """Pre-flight upper bound for one exchange, using the same arithmetic as
-    charge() at the high default token ratio: the reused prefix at the input
-    price, the rest of the prompt at the highest input-side price we might
-    bill, plus a full max_tokens reply."""
-    ratio = DEFAULT_TOKENS_PER_CHAR
-    total = int(max(0, prompt_chars) * ratio) + 1
+    """Pre-flight upper bound for one exchange: the reused prefix at the
+    input price, the rest of the prompt at the highest input-side price we
+    might bill, plus a full max_tokens reply. Uses the estimate unscaled."""
+    total = max(0.0, prompt_est)
     if not caching:
         return (total * prices.input + max_tokens * prices.output) / _MTOK
-    reused = min(total, int(min(reused_chars, prompt_chars) * ratio)) if reused_chars > 0 else 0
+    reused = min(total, max(0.0, reused_est))
     rest_price = max(prices.input, prices.cache_write)
     return (
         reused * prices.input + (total - reused) * rest_price + max_tokens * prices.output

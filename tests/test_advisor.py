@@ -4,6 +4,7 @@ import pytest
 from conftest import FakeLlm, reply
 
 from advisor_call.advisor import AdvisorError, ask, build_request
+from advisor_call.cost import estimate_tokens
 from advisor_call.prompts import ADVISOR_SYSTEM
 from advisor_call.settings import parse_settings
 
@@ -38,7 +39,7 @@ def test_opening_layout_breakpoint_a():
     assert req.messages[1]["role"] == "user"
     assert req.messages[1]["content"][0]["text"].startswith("<transcript>")
     assert markers(req.messages) == [(1, {"type": "ephemeral"})]
-    assert req.uncached_chars == 0 and req.cached_prefix_chars == req.prompt_chars
+    assert req.uncached_est == 0 and req.cached_prefix_est == req.prompt_est
 
 
 def test_third_exchange_breakpoints_a_and_b_only():
@@ -48,8 +49,8 @@ def test_third_exchange_breakpoints_a_and_b_only():
     assert roles == ["system", "user", "assistant", "user", "assistant", "user"]
     assert [i for i, _ in markers(req.messages)] == [1, 4]  # opening and the latest reply
     assert req.messages[-1] == {"role": "user", "content": "executor message 3"}
-    assert req.uncached_chars == len("executor message 3")
-    assert req.cached_prefix_chars == req.prompt_chars - req.uncached_chars
+    assert req.uncached_est == pytest.approx(estimate_tokens("executor message 3"))
+    assert req.cached_prefix_est == pytest.approx(req.prompt_est - req.uncached_est)
 
 
 @pytest.mark.parametrize("n", range(1, 12))
@@ -62,7 +63,7 @@ def test_cache_off_and_1h():
     off = build_request(conv(3), "off")
     assert markers(off.messages) == []
     assert all(isinstance(m["content"], str) for m in off.messages)
-    assert off.uncached_chars == off.prompt_chars and off.cached_prefix_chars == 0
+    assert off.uncached_est == off.prompt_est and off.cached_prefix_est == 0
     hour = build_request(conv(2), "1h")
     assert {c["ttl"] for _, c in markers(hour.messages)} == {"1h"}
 
@@ -96,11 +97,25 @@ def test_empty_reply_is_an_error_with_usage():
     assert "empty" in err.value.message and err.value.usage.output_tokens == 4000
 
 
-def test_fallback_provider_is_rejected_and_unbilled():
-    llm = FakeLlm().script(reply("from elsewhere", provider="ollama"))
+def test_fallback_provider_is_rejected_and_not_billable():
+    llm = FakeLlm().script(reply("from elsewhere", provider="ollama", input_tokens=7))
     with pytest.raises(AdvisorError) as err:
         ask(llm, LINE, SETTINGS, build_request(conv(1), "5m"))
-    assert "fell back" in err.value.message and err.value.usage is None
+    assert "fell back" in err.value.message
+    assert not err.value.billable and err.value.provider == "ollama"
+    assert err.value.usage.input_tokens == 7  # kept for the record
+
+
+def test_timeout_is_flagged_for_estimate_billing():
+    for exc in (TimeoutError("slow"), RuntimeError("Request timed out after 180s")):
+        llm = FakeLlm().script(exc)
+        with pytest.raises(AdvisorError) as err:
+            ask(llm, LINE, SETTINGS, build_request(conv(1), "5m"))
+        assert err.value.bill_estimate
+    llm = FakeLlm().script(ConnectionError("refused"))
+    with pytest.raises(AdvisorError) as err:
+        ask(llm, LINE, SETTINGS, build_request(conv(1), "5m"))
+    assert not err.value.bill_estimate
 
 
 def test_exception_becomes_advisor_error_with_hint():

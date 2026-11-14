@@ -191,3 +191,33 @@ def reply(
         provider=provider,
         usage=FakeUsage(input_tokens, output_tokens, cache_read, cache_write),
     )
+
+
+def gated_handlers(runtime) -> dict[str, Any]:
+    """Tool handlers called the way Hermes calls them: the pre_tool_call
+    hook runs first; "block" stops the call, "approve" stands for a human
+    tapping Approve."""
+    import json
+
+    from advisor_call.hooks import Hooks
+    from advisor_call.tools import TOOLS, make_handler
+
+    hooks = Hooks(runtime)
+
+    def wrap(name, handler):
+        def call(args, session_id=None, **kwargs):
+            directive = hooks.pre_tool_call(
+                tool_name=name, args=args if isinstance(args, dict) else {}, session_id=session_id
+            )
+            if directive and directive.get("action") == "block":
+                return json.dumps({"error": directive["message"], "blocked": True})
+            return handler(args, session_id=session_id, **kwargs)
+
+        return call
+
+    return {name: wrap(name, make_handler(runtime, fn)) for name, _, fn, _ in TOOLS}
+
+
+@pytest.fixture
+def tools(runtime):
+    return gated_handlers(runtime)

@@ -79,10 +79,14 @@ class Call:
     usage: Usage = field(default_factory=Usage)
     in_flight: bool = False
     estimated: bool = False  # part of the bill is an estimate (cache usage hidden)
-    # Prompt prefix (in characters) the last successful exchange left in
+    # Prompt prefix (estimated tokens) the last successful exchange left in
     # Anthropic's cache, and when. Used to estimate cache reads.
-    cached_chars: int = 0
+    cached_est: float = 0.0
     cached_at: float | None = None
+    # How the token estimator compared with what Hermes reported on this
+    # call (>1 means the text is denser than estimated). Scales the next
+    # pre-flight estimate up, never down.
+    token_scale: float = 1.0
 
     @property
     def is_open(self) -> bool:
@@ -330,15 +334,17 @@ class CallManager:
         usage: Usage,
         ok: bool,
         estimated: bool = False,
-        cached_prefix_chars: int = 0,
+        cached_prefix_est: float = 0.0,
+        token_scale: float | None = None,
     ) -> Settled:
         """Record one exchange. On success the executor message and the reply
         are appended; on failure the conversation is left unchanged. Cost is
         added either way. Ends the call when it reaches its cap.
 
-        cached_prefix_chars: on success, the prompt prefix this request left
-        in the cache (through its last cache breakpoint). After a failure we
-        assume nothing is cached, which can only raise the next estimate."""
+        cached_prefix_est: on success, the prompt prefix (estimated tokens)
+        this request left in the cache, through its last breakpoint. After a
+        failure we assume nothing is cached, which can only raise the next
+        estimate. token_scale: the measured estimator scale, if any."""
         ended: list[Call] = []
         call = res.call
         with self._lock:
@@ -348,11 +354,13 @@ class CallManager:
             call.cost_usd += max(0.0, cost_usd)
             call.usage.add(usage)
             call.estimated = call.estimated or estimated
+            if token_scale is not None and token_scale > call.token_scale:
+                call.token_scale = token_scale
             if ok and reply:
-                call.cached_chars = max(0, cached_prefix_chars)
+                call.cached_est = max(0.0, cached_prefix_est)
                 call.cached_at = call.last_activity
             else:
-                call.cached_chars, call.cached_at = 0, None
+                call.cached_est, call.cached_at = 0.0, None
             if ok and reply:
                 call.messages.extend(
                     [{"role": "user", "content": res.text}, {"role": "assistant", "content": reply}]

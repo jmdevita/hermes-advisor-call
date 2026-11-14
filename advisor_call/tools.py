@@ -16,13 +16,14 @@ from .advisor import AdvisorError, AdvisorRequest, ask, build_request
 from .calls import Call, CallError, end_reason_text
 from .context import render_transcript
 from .cost import (
+    MIN_CALIBRATION_TOKENS,
     Charge,
     Usage,
     call_cap,
     charge,
     estimate_cost,
     preflight_refusal,
-    reusable_prefix_chars,
+    reusable_prefix,
 )
 from .ledger import LedgerError
 from .prompts import GUIDANCE_ON_ERROR, NO_TRANSCRIPT_NOTE, OPENING_TEMPLATE
@@ -165,38 +166,65 @@ def _usable_line(settings: Settings, name: str) -> tuple[Line | None, str]:
 
 
 def _bill_for(
-    usage: Usage, line: Line, settings: Settings, req: AdvisorRequest, reused: int
+    usage: Usage,
+    line: Line,
+    settings: Settings,
+    req: AdvisorRequest,
+    reused: float,
+    est_cost: float,
 ) -> Charge:
-    if not (
-        usage.input_tokens
-        or usage.output_tokens
-        or usage.cache_read_tokens
-        or usage.cache_write_tokens
-    ):
+    if not usage.reported:
         # The provider answered but no usage came back: bill the upper bound.
-        return Charge(
-            estimate_cost(
-                req.prompt_chars,
-                line.max_tokens,
-                line.prices,
-                caching=settings.caching,
-                reused_chars=reused,
-            ),
-            estimated=True,
-        )
+        return Charge(est_cost, estimated=True)
     return charge(
         usage,
         line.prices,
         caching=settings.caching,
-        prompt_chars=req.prompt_chars,
-        uncached_chars=req.uncached_chars,
-        reused_chars=reused,
+        prompt_est=req.prompt_est,
+        uncached_est=req.uncached_est,
+        reused_est=reused,
     )
+
+
+def _measured_scale(usage: Usage, settings: Settings, req: AdvisorRequest) -> float | None:
+    """How much denser the text was than estimate_tokens() assumed, measured
+    on whatever part of the prompt Hermes reported exactly."""
+    if not usage.reported:
+        return None
+    exact_total = not settings.caching or usage.cache_read_tokens or usage.cache_write_tokens
+    if exact_total:
+        seen = usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens
+        basis = req.prompt_est
+    else:
+        seen, basis = usage.input_tokens, req.uncached_est
+    if basis < MIN_CALIBRATION_TOKENS or seen <= 0:
+        return None
+    return seen / basis
+
+
+_estimate_warned = False
+
+
+def _warn_estimate_once() -> None:
+    global _estimate_warned
+    if not _estimate_warned:
+        _estimate_warned = True
+        log.warning(
+            "advisor-call: advisor bills are estimates while prompt caching is on: Hermes does "
+            "not pass Anthropic's cache token counts to plugins. Set "
+            "plugins.entries.advisor-call.advisor.cache_ttl: off for exact bills (DESIGN.md 2.1)."
+        )
 
 
 def _record(
     rt: Runtime, call: Call, line: Line, model: str, usage: Usage, ch: Charge, ok: bool
 ) -> None:
+    """Write the exchange to the ledger. Called while the exchange's
+    reservation is still held, so other sessions always see its cost in one
+    place or the other. If the write fails, the cost is kept in memory and
+    still counted against today's allowance and the cycle budget."""
+    if ch.estimated:
+        _warn_estimate_once()
     try:
         rt.ledger.record_exchange(
             ts=rt.clock.time(),
@@ -214,8 +242,14 @@ def _record(
             estimated=ch.estimated,
         )
     except LedgerError as exc:
-        # The call's own total still holds this cost; the day total will lag.
-        log.warning("advisor-call: could not record exchange on %s: %s", call.call_id, exc)
+        rt.add_unrecorded(ch.cost_usd)
+        log.warning(
+            "advisor-call: could not record exchange on %s (%s); $%.4f kept in memory "
+            "and still counted against the caps",
+            call.call_id,
+            exc,
+            ch.cost_usd,
+        )
 
 
 def _log_transcript(
@@ -231,27 +265,42 @@ def _log_transcript(
         log.warning("advisor-call: transcript log failed: %s", exc)
 
 
+def _failure(
+    rt: Runtime, settings: Settings, call: Call, message: str, ended_now: str = ""
+) -> dict[str, Any]:
+    result = _error(
+        message,
+        call_id=call.call_id,
+        status="open" if call.is_open else "ended",
+        bill=rt.bill(call, settings),
+    )
+    if ended_now:
+        result.update(end_reason=ended_now, notice=_ended_notice(ended_now))
+    return result
+
+
 def exchange(
     rt: Runtime, settings: Settings, line: Line, session_id: str, call_id: str | None, text: str
 ) -> dict[str, Any]:
     """Send one executor message on the session's open call: reserve under
-    the caps, ask the advisor outside the lock, settle, record."""
+    the caps, ask the advisor outside the lock, record, then settle."""
     captured: dict[str, Any] = {}
 
     def preflight(call: Call, pending: list[dict[str, str]], elsewhere: float):
         req = build_request(pending, settings.cache_ttl)
-        reused = reusable_prefix_chars(
-            call.cached_chars, call.cached_at, rt.clock.time(), settings.cache_ttl
+        reused = reusable_prefix(
+            call.cached_est, call.cached_at, rt.clock.time(), settings.cache_ttl
         )
+        scale = max(1.0, call.token_scale)  # text on this call measured denser: estimate up
         est = estimate_cost(
-            req.prompt_chars,
+            req.prompt_est * scale,
             line.max_tokens,
             line.prices,
             caching=settings.caching,
-            reused_chars=reused,
+            reused_est=reused * scale,
         )
         state = rt.budget(settings)  # raises -> no exchange
-        captured.update(req=req, reused=reused)
+        captured.update(req=req, reused=reused, est=est)
         reason = preflight_refusal(
             call_cost=call.cost_usd,
             call_cap_usd=call.cap_usd,
@@ -272,40 +321,65 @@ def exchange(
 
     call = res.call
     req: AdvisorRequest = captured["req"]
-    reused: int = captured["reused"]
+    reused: float = captured["reused"]
+    est: float = captured["est"]
     rt.manager.mark_activity(session_id)
+
     try:
-        reply = ask(rt.llm(), line, settings, req)
+        llm = rt.llm()
+    except Exception as exc:  # noqa: BLE001 - nothing was sent: release, bill nothing
+        rt.manager.release(res)
+        log.exception("advisor-call: ctx.llm unavailable")
+        return _failure(rt, settings, call, f"advisor unavailable: {type(exc).__name__}: {exc}")
+
+    try:
+        reply = ask(llm, line, settings, req)
     except AdvisorError as err:
         usage = err.usage or Usage()
-        billed = err.usage is not None and (usage.input_tokens or usage.output_tokens)
-        ch = _bill_for(usage, line, settings, req, reused) if billed else Charge(0.0, False)
+        if not err.billable:
+            # Answered by another provider (Hermes' fallback): record its
+            # usage for the record, but do not price it as this line.
+            ch = Charge(0.0, False)
+            _record(rt, call, line, err.provider or "fallback", usage, ch, ok=False)
+        else:
+            if err.bill_estimate:
+                ch = Charge(est, estimated=True)  # may have been processed and billed
+            elif usage.reported:
+                ch = _bill_for(usage, line, settings, req, reused, est)
+            else:
+                ch = Charge(0.0, False)
+            if ch.cost_usd > 0:
+                _record(rt, call, line, line.model, usage, ch, ok=False)
         settled = rt.manager.settle(
-            res, reply=None, cost_usd=ch.cost_usd, usage=usage, ok=False, estimated=ch.estimated
+            res,
+            reply=None,
+            cost_usd=ch.cost_usd,
+            usage=usage,
+            ok=False,
+            estimated=ch.estimated,
+            token_scale=_measured_scale(usage, settings, req),
         )
-        if billed:
-            _record(rt, call, line, line.model, usage, ch, ok=False)
         _log_transcript(rt, settings, call, text, None)
-        result = _error(
-            f"advisor unavailable: {err.message}",
-            call_id=call.call_id,
-            status="open" if call.is_open else "ended",
-            bill=rt.bill(call, settings),
+        return _failure(
+            rt, settings, call, f"advisor unavailable: {err.message}", settled.ended_now
         )
-        if settled.ended_now:
-            result.update(end_reason=settled.ended_now, notice=_ended_notice(settled.ended_now))
-        return result
-    except Exception as exc:  # noqa: BLE001 - e.g. ctx.llm unavailable; never leave it in flight
-        rt.manager.release(res)
-        log.exception("advisor-call: advisor request could not be made")
-        return _error(
+    except Exception as exc:  # noqa: BLE001 - a bug after the request may have gone out
+        log.exception("advisor-call: unexpected error during the advisor request")
+        ch = Charge(est, estimated=True)
+        _record(rt, call, line, line.model, Usage(), ch, ok=False)
+        settled = rt.manager.settle(
+            res, reply=None, cost_usd=ch.cost_usd, usage=Usage(), ok=False, estimated=True
+        )
+        return _failure(
+            rt,
+            settings,
+            call,
             f"advisor unavailable: {type(exc).__name__}: {exc}",
-            call_id=call.call_id,
-            status="open" if call.is_open else "ended",
-            bill=rt.bill(call, settings),
+            settled.ended_now,
         )
 
-    ch = _bill_for(reply.usage, line, settings, req, reused)
+    ch = _bill_for(reply.usage, line, settings, req, reused, est)
+    _record(rt, call, line, reply.model, reply.usage, ch, ok=True)
     settled = rt.manager.settle(
         res,
         reply=reply.text,
@@ -313,9 +387,9 @@ def exchange(
         usage=reply.usage,
         ok=True,
         estimated=ch.estimated,
-        cached_prefix_chars=req.cached_prefix_chars if settings.caching else 0,
+        cached_prefix_est=req.cached_prefix_est if settings.caching else 0.0,
+        token_scale=_measured_scale(reply.usage, settings, req),
     )
-    _record(rt, call, line, reply.model, reply.usage, ch, ok=True)
     _log_transcript(rt, settings, call, text, reply.text)
     result: dict[str, Any] = {
         "call_id": call.call_id,
@@ -373,6 +447,12 @@ def open_call(
     if settings.budget.cycle_error:
         return _error(settings.budget.cycle_error)
 
+    # The approval hook leaves a one-shot authorization for this tool call.
+    # A new (paid) call needs one that came from a human approval or a
+    # matching /second-opinion allow; "a call is already open" is not enough,
+    # because that call may have ended while this tool call was waiting.
+    authorization = rt.take_authorization(session_id) if initiated_by == "executor" else "user"
+
     try:
         existing = rt.manager.get(session_id)
     except CallError:
@@ -386,6 +466,12 @@ def open_call(
             "note": "A call is already open in this session; continue with advisor_call_say.",
             "bill": rt.bill(existing, settings),
         }
+
+    if authorization not in ("approved", "grant", "user"):
+        return _error(
+            "This new call was not approved (the previous call ended while the request was "
+            "waiting). Call advisor_call_open again; the user will be asked to approve."
+        )
 
     try:
         state = rt.budget(settings)

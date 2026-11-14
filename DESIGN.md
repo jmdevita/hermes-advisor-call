@@ -239,32 +239,45 @@ is used to read real spend. Caching stays on by default
 (`advisor.cache_ttl: 5m`), and the cached part of each exchange is billed
 **by estimate**, labelled as such wherever a bill is shown.
 
-How the estimate works (`cost.charge`):
+How the estimate works (`cost.estimate_tokens`, `cost.charge`):
 
-1. Hermes reports only the uncached tail of the prompt (after the last
+1. **Token estimate by kind of character**, deliberately on the high side:
+   ASCII letters and whitespace 1/3 token each, ASCII digits and
+   punctuation 1/1.5, other characters of the Basic Multilingual Plane
+   (CJK, accented letters) 1.5, characters beyond U+FFFF (emoji) 3.
+   English prose is really about 1/4 token per character, so English is
+   over-estimated by about a third; dense text (CJK, code, JSON, base64)
+   is not under-estimated the way a flat "3 characters per token" was.
+2. Hermes reports only the uncached tail of the prompt (after the last
    cache breakpoint, normally the executor's newest message) as
    `input_tokens`. That part is exact.
-2. The cached part is sized in tokens with a ratio **measured on that
-   tail** (`input_tokens / tail characters`), clamped between 1/4 and 1/2
-   tokens per character. When the tail is under 400 characters (the
-   opening exchange) the ratio is the deliberately high 1/3.
-3. The part of the prompt the previous successful exchange left in the
+3. The cached part's estimate is **scaled by how the estimator did on that
+   tail** (`input_tokens / estimated tail tokens`), between 0.75 and 3.
+   The floor keeps part of the estimator's margin; a tail under 100
+   estimated tokens (the opening exchange) leaves the estimate unscaled.
+4. The part of the prompt the previous successful exchange left in the
    cache, if that was less than the TTL minus 30 seconds ago, is billed at
    the **normal input price** (2.00), more than a cache read (0.10). The
    rest is billed at the cache-write price (2.50).
+5. **The measured scale carries forward.** Whenever Hermes reports more
+   tokens than estimated, the call remembers the ratio and the pre-flight
+   check for its next message is scaled up by it (never down).
 
 Bounds:
 
-- The count never exceeds the caching-off cost by more than the write
-  premium on new text, and is always above the real cost when the cache
-  behaves.
+- For text the estimator does not under-estimate, the count is above the
+  real cost when the cache behaves, and does not exceed the caching-off
+  cost by more than the write premium on new text.
 - An unexpected cache miss (Anthropic evicts early, or a prompt is under
   the 512-token minimum) under-bills only the reused prefix, by
   2.50 - 2.00 = 0.50 per MTok: about half a cent per missed message for a
   10K-token transcript.
+- **It is still an estimate.** Text denser than the estimator assumes can
+  be under-billed on the opening exchange (nothing is measured yet); from
+  the second message on, the tail measurement corrects the cached part.
 - Worked example (test `test_worked_example_ten_messages`): 10 messages, a
   40,000-character opening, ~2,000-character questions, ~3,200-character
-  replies, English text. Plugin count ~$0.42; real cost ~$0.16; caching off
+  replies, English text. Plugin count ~$0.40; real cost ~$0.15; caching off
   ~$0.40. Fits the $0.50 default cap.
 
 Where it is labelled: each exchange row has `estimated = 1` in the ledger;
@@ -326,13 +339,19 @@ and is not the advisor the user approved.
 
 - After each exchange the plugin checks `result.provider` against the
   line's configured provider. A mismatch is treated as "advisor
-  unavailable (Hermes fell back to <provider>)": the reply is not used, the
-  exchange is recorded with `ok=0`, and its tokens are not billed at
-  Anthropic prices.
+  unavailable (Hermes fell back to <provider>)": the reply is not used, and
+  the exchange is recorded with `ok=0`, the other provider's name as the
+  model, its token counts, and a cost of 0 (it is not this line's money and
+  not priced by it).
 - `PluginLlmTrustError`, the SDK's own errors (for example
   `anthropic.APIStatusError`), `RuntimeError` and
   `InvalidProviderResponseError` can all surface. The handler catches
   `Exception` and reports "advisor unavailable: <type>: <message>".
+- **A timeout is billed at the pre-flight estimate** and counts as a
+  message: the request may have been processed and billed although no
+  reply arrived. So is a result the plugin cannot read, and any unexpected
+  error after the request went out. A failure that clearly never reached
+  the provider (for example a refused connection) is not billed.
 
 ### 2.5 Approval, confirmed with three additions
 
@@ -389,9 +408,14 @@ advisor-call`, `hermes plugins validate <path>` and `hermes plugins doctor
 - **Call ids** are `c-` plus 8 hex characters (4 would eventually collide in
   the ledger's `calls` primary key over months of use).
 - **Concurrent sessions.** Every exchange reserves its pre-flight estimate
-  while it is in flight. Other sessions' pre-flight checks add those
-  reservations to today's spend, so two sessions cannot both spend the last
-  of today's allowance.
+  while it is in flight, and its ledger row is written *before* the
+  reservation is released. Other sessions' pre-flight checks add those
+  reservations to today's spend, so a cost is always visible to them in one
+  place or the other, and two sessions cannot both spend the last of
+  today's allowance (within the accuracy of the estimate).
+- **A failed ledger write** keeps the cost in memory, where it still counts
+  against today's allowance and the cycle budget until the process stops,
+  and logs a warning.
 - **A failed exchange** leaves the advisor-side conversation unchanged (the
   executor's message is not appended), so user/assistant turns always
   alternate. If it was billed, it still counts toward the message limit.
@@ -530,4 +554,48 @@ advisor-call`, `hermes plugins validate <path>` and `hermes plugins doctor
 
 Also confirm once: with `approvals.mode: smart`, the approval still reaches
 the human.
+
+## 6. Pre-release review (2026-11-14)
+
+An independent review before publication found nine defects, each
+demonstrated with a failing test; all are fixed and the demonstrations are
+now regression tests (`tests/test_review_regressions.py`, plus tests in
+`test_hooks.py` and `test_context.py`).
+
+1. **Dense text broke the estimate.** A flat 3 characters per token let
+   CJK or code exceed the per-call cap and under-billed the cached part.
+   Fixed with the character-aware estimate and the carried-forward scale
+   (section 2.1).
+2. **A pre-authorization for one line skipped approval for every line.**
+   A `/second-opinion allow` grant now covers only the line it was given
+   for.
+3. **Approval could be skipped by timing.** The hook let a call through
+   because one was open; if that call ended before the handler ran, the
+   handler opened a new, unapproved call. The hook now leaves a one-shot
+   authorization (`approved`, `grant`, or `existing`), valid for 15
+   minutes, and a new call needs `approved` or `grant`.
+4. **A secret split by truncation reached the advisor.** Redaction now runs
+   on every piece of the transcript before anything is cut, and once more
+   over the final text.
+5. **Two sessions could overspend the allowance in a small window** between
+   releasing a reservation and writing the ledger. The ledger is now
+   written first.
+6. **A failed ledger write let spend escape the daily and cycle caps.** The
+   cost is now kept in memory and counted.
+7. **A gateway session without a sender id passed `allowed_senders`.**
+   With a non-empty list, a known sender must be on it; a local session
+   (empty, `cli`, `tui`) without a sender is the owner; anything else,
+   including a session the plugin has not seen, is refused.
+8. **A fallback provider's reply was not recorded.** It is now recorded
+   with `ok=0` and a cost of 0 (section 2.4).
+9. **Unusable usage values (for example infinity) made a reply free.** They
+   now count as 0 and the reply is billed at the estimate.
+
+Also changed from the review's second tier: timeouts are billed at the
+estimate; the approval prompt states the figures first and quotes the
+model-written reason at the end, so it cannot pass itself off as the cap;
+`/second-opinion transcript` is limited to `allowed_senders`;
+`/second-opinion ask` handles the executor opening a call at the same
+moment; the one-time "bills are estimates" warning, described in
+section 2.1 but missing, is now logged.
 

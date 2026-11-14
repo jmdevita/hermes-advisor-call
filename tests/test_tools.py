@@ -3,19 +3,14 @@
 import json
 
 import pytest
-from conftest import reply
+from conftest import gated_handlers, reply
 
 from advisor_call.ledger import Ledger
 from advisor_call.runtime import Runtime
 from advisor_call.settings import parse_settings
-from advisor_call.tools import HANGUP, OPEN, SAY, TOOLS, make_handler
+from advisor_call.tools import HANGUP, OPEN, SAY
 
 SID = "session-1"
-
-
-@pytest.fixture
-def tools(runtime):
-    return {name: make_handler(runtime, fn) for name, _, fn, _ in TOOLS}
 
 
 def call(tools, name, args, session_id=SID):
@@ -81,12 +76,21 @@ def test_empty_reply_is_error_and_not_appended(tools, fake_llm, runtime):
 
 def test_advisor_exception_keeps_call_open(tools, fake_llm, runtime):
     # U-17
-    fake_llm.script(reply("first"), TimeoutError("read timed out"))
+    fake_llm.script(reply("first"), ConnectionError("connection refused"))
     open_(tools)
     out = call(tools, SAY, {"message": "next"})
     assert out["error"].startswith("advisor unavailable") and out["status"] == "open"
     assert runtime.manager.get(SID).is_open
-    assert out["bill"]["messages"] == 1  # unbilled failure does not count
+    assert out["bill"]["messages"] == 1  # an unbilled failure does not count
+
+
+def test_timeout_is_billed_at_the_estimate(tools, fake_llm, runtime):
+    # A timed-out request may still have been processed and billed.
+    fake_llm.script(reply("first"), TimeoutError("read timed out"))
+    first = open_(tools)
+    out = call(tools, SAY, {"message": "next"})
+    assert out["status"] == "open" and out["bill"]["messages"] == 2
+    assert out["bill"]["cost_usd"] > first["bill"]["cost_usd"] and out["bill"]["estimate"]
 
 
 def test_handlers_never_raise(tools, runtime):
@@ -119,7 +123,9 @@ def test_missing_session_id(tools, fake_llm):
     ):
         for sid in (None, ""):
             out = call(tools, name, args, session_id=sid)
-            assert "no session id" in out["error"] and "guidance" in out
+            assert "no session id" in out["error"]
+            # The handler itself (reached when the hook lets it through) gives guidance.
+            assert "guidance" in out or out.get("blocked")
     assert fake_llm.calls == []
 
 
@@ -204,7 +210,7 @@ def test_ledger_failure_fails_closed(tools, fake_llm, runtime):
 
     runtime.ledger = Ledger(broken)
     out = open_(tools)
-    assert "cannot check the advisor budget" in out["error"] and fake_llm.calls == []
+    assert "budget cannot be checked" in out["error"] and fake_llm.calls == []  # hook blocks
 
 
 def test_custom_cap_from_grant(tools, fake_llm, runtime):
@@ -243,12 +249,12 @@ def test_restart_is_reported(fake_llm, db_path, clock, config):
         )
 
     rt = make()
-    first = {n: make_handler(rt, fn) for n, _, fn, _ in TOOLS}
+    first = gated_handlers(rt)
     fake_llm.script(reply())
     opened = json.loads(first[OPEN]({"reason": "r", "question": "q"}, session_id=SID))
     assert rt.manager.get(SID).is_open
     rt2 = make()
-    restarted = {n: make_handler(rt2, fn) for n, _, fn, _ in TOOLS}
+    restarted = gated_handlers(rt2)
     out = json.loads(restarted[SAY]({"message": "m", "call_id": opened["call_id"]}, session_id=SID))
     assert "gateway restarted" in out["error"]
 
@@ -270,7 +276,7 @@ def test_redaction_applied_to_messages(fake_llm, db_path, clock, config):
         clock=clock,
         redactor=lambda: lambda t: t.replace("hunter2", "[REDACTED]"),
     )
-    handlers = {n: make_handler(rt, fn) for n, _, fn, _ in TOOLS}
+    handlers = gated_handlers(rt)
     fake_llm.script(reply(), reply())
     handlers[OPEN]({"reason": "r", "question": "pw hunter2"}, session_id=SID)
     handlers[SAY]({"message": "still hunter2"}, session_id=SID)
@@ -296,3 +302,14 @@ def test_reuse_within_ttl_is_billed_lower(tools, fake_llm, clock):
     # The tail measured 4 chars per token, so ~31,600 reused chars are ~7,900
     # tokens, billed at 2.00 instead of 2.50: about 0.4 cents cheaper.
     assert after - within == pytest.approx(31_600 / 4 * 0.5 / 1e6, rel=0.1)
+
+
+def test_estimate_warning_logged_once(tools, fake_llm, caplog, monkeypatch):
+    import advisor_call.tools as tools_module
+
+    monkeypatch.setattr(tools_module, "_estimate_warned", False)
+    fake_llm.script(reply(), reply())
+    with caplog.at_level("WARNING", logger="advisor_call.tools"):
+        open_(tools)
+        call(tools, SAY, {"message": "again"})
+    assert sum("bills are estimates" in r.message for r in caplog.records) == 1

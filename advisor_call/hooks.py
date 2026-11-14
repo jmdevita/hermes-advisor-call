@@ -58,12 +58,25 @@ def _block(message: str) -> dict[str, str]:
     return {"action": "block", "message": message}
 
 
-def sender_allowed(settings: Settings, sender_id: str) -> bool:
-    """allowed_senders applies when it is non-empty and a sender is known
-    (gateway sessions). CLI sessions have no sender and are the local owner."""
-    if not settings.allowed_senders or not sender_id:
+# Platforms that run on the owner's own machine. Hermes passes an empty
+# platform for CLI agents (DESIGN.md, Phase 3 notes).
+LOCAL_PLATFORMS = frozenset({"", "cli", "tui", "acp", "local"})
+
+
+def sender_allowed(settings: Settings, identity: tuple[str, str] | None) -> bool:
+    """identity is (sender_id, platform) from the session's captured context,
+    or None when the session has not been seen. allowed_senders applies when
+    it is non-empty: a known sender must be on it; a local session with no
+    sender is the owner; anything else (an unseen session, a gateway session
+    without a sender id) is refused."""
+    if not settings.allowed_senders:
         return True
-    return sender_id in settings.allowed_senders
+    if identity is None:
+        return False
+    sender, platform = identity
+    if sender:
+        return sender in settings.allowed_senders
+    return platform.lower() in LOCAL_PLATFORMS
 
 
 def money(value: float) -> str:
@@ -96,8 +109,7 @@ class Hooks:
         if not session_id:
             return None  # the handler reports the missing session
         settings = self.rt.settings()
-        sender, _ = self.rt.context.sender(session_id)
-        if not sender_allowed(settings, sender):
+        if not sender_allowed(settings, self.rt.context.identity(session_id)):
             return _block("This sender is not allowed to use advisor calls.")
         return None
 
@@ -108,12 +120,13 @@ class Hooks:
             return _block("advisor-call: no session id, so no call was made.")
         settings = rt.settings()
         # 2. Sender.
-        sender, _ = rt.context.sender(session_id)
-        if not sender_allowed(settings, sender):
+        if not sender_allowed(settings, rt.context.identity(session_id)):
             return _block("This sender is not allowed to use advisor calls.")
         # 3. An open call is returned by the handler without a new request.
+        # The handler will not open a *new* call on this authorization.
         try:
             rt.manager.get(session_id)
+            rt.authorize(session_id, "existing")
             return None
         except CallError:
             pass
@@ -137,8 +150,9 @@ class Hooks:
                 "judgment and tell the user."
             )
         grant = rt.manager.grant_for(session_id)
-        custom = grant.cap_usd if grant is not None and grant.line == line.name else None
-        cap = call_cap(settings.budget, state, custom)
+        if grant is not None and grant.line != line.name:
+            grant = None  # a pre-authorization covers only the line it was given for
+        cap = call_cap(settings.budget, state, grant.cap_usd if grant is not None else None)
         if state.available <= 0 or cap <= 0:
             return _block(
                 f"Advisor budget for today is used up ({money(state.spent_today)} of "
@@ -154,18 +168,22 @@ class Hooks:
             return _block(
                 "Approvals are off, so advisor calls need `/second-opinion allow` from the user."
             )
-        # 7. Pre-authorized by the user for this session.
+        # 7. Pre-authorized by the user for this session and line.
         if grant is not None:
+            rt.authorize(session_id, "grant")
             return None
         # 8. Ask the human. The session id in rule_key makes "Always" match
-        # this session only, so a new session always asks again.
-        reason = sanitize_reason(args.get("reason"))
+        # this session only, so a new session always asks again. The figures
+        # come first and the model-written reason is quoted last, so the
+        # reason cannot pass itself off as the cap.
+        reason = sanitize_reason(args.get("reason")).replace('"', "'")
+        rt.authorize(session_id, "approved")
         return {
             "action": "approve",
             "message": (
-                f"Call the {line.name} advisor ({line.model}). Reason: {reason} | "
-                f"Bill cap {money(cap)}, today {money(state.spent_today)} of "
-                f"{money(state.allowance)}"
+                f"Advisor call ({line.name}, {line.model}): bill cap {money(cap)}, today "
+                f"{money(state.spent_today)} of {money(state.allowance)}. "
+                f'Reason given by the model: "{reason}"'
             ),
             "rule_key": f"advisor_call:{line.name}:{session_id}",
         }
