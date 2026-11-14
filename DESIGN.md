@@ -216,39 +216,59 @@ Minimum cacheable prefix on Sonnet 5.5: **512 tokens**.
 
 ## 2. Changes to the plan
 
-### 2.1 Caching and billing (from O-2): **decided, known gap**
+### 2.1 Caching and billing (from O-2): **decided, known gap, billed by estimate**
 
 **Decision (2026-11-14):** accepted as a known gap for v1. No Admin API key
-is used to read real spend.
+is used to read real spend. Caching stays on by default
+(`advisor.cache_ttl: 5m`), and the cached part of each exchange is billed
+**by estimate**, labelled as such wherever a bill is shown.
 
-- `advisor.cache_ttl` defaults to `5m` (caching on), as in the original
-  plan. Markers are sent, and because Hermes hides the cache counts, the
-  plugin bills pessimistically: every input token it estimates was sent but
-  Hermes did not report is priced as a cache write. This over-states the
-  cost, so caps still hold, but `/phone bill` will read higher than the
-  Console. The plugin logs a one-time warning saying so.
-- With `cache_ttl: off`, Hermes' `input_tokens` covers the whole prompt, so
-  the bill is exact, at the price of re-sending the transcript at full input
-  price on every follow-up.
-- If a later Hermes reports cache counts (nonzero `cache_read_tokens` or
-  `cache_write_tokens`), the plugin uses them and bills exactly.
-- README "Known gaps" states this plainly.
+How the estimate works (`cost.charge`):
 
-Options that were considered:
+1. Hermes reports only the uncached tail of the prompt (after the last
+   cache breakpoint, normally the executor's newest message) as
+   `input_tokens`. That part is exact.
+2. The cached part is sized in tokens with a ratio **measured on that
+   tail** (`input_tokens / tail characters`), clamped between 1/4 and 1/2
+   tokens per character. When the tail is under 400 characters (the
+   opening exchange) the ratio is the deliberately high 1/3.
+3. The part of the prompt the previous successful exchange left in the
+   cache, if that was less than the TTL minus 30 seconds ago, is billed at
+   the **normal input price** (2.00), more than a cache read (0.10). The
+   rest is billed at the cache-write price (2.50).
 
-Hermes hides cache usage, so the plugin cannot bill a cached exchange
-correctly. Options:
+Bounds:
 
-| | Option | Billing | Cost |
-|---|---|---|---|
-| A | Ship with `cache_ttl: off` by default; keep the marker code behind the setting | Exact: with no caching, `input_tokens` is the whole prompt | Follow-ups re-send the transcript at full input price. About $0.02 more per follow-up for an 11K-token opening |
-| B | Keep caching on; bill pessimistically by treating every input token Hermes did not report as a cache write | Always over-states (reads are charged as writes), so caps hold but pacing is stricter than reality, and `/phone bill` will not match the Console (L-12) | Cheapest real spend |
-| C | Fix upstream: keep `cache_read_input_tokens` and `cache_creation_input_tokens` in the adapter's usage | Exact with caching | One-line Hermes change; needs a release |
+- The count never exceeds the caching-off cost by more than the write
+  premium on new text, and is always above the real cost when the cache
+  behaves.
+- An unexpected cache miss (Anthropic evicts early, or a prompt is under
+  the 512-token minimum) under-bills only the reused prefix, by
+  2.50 - 2.00 = 0.50 per MTok: about half a cent per missed message for a
+  10K-token transcript.
+- Worked example (test `test_worked_example_ten_messages`): 10 messages, a
+  40,000-character opening, ~2,000-character questions, ~3,200-character
+  replies, English text. Plugin count ~$0.42; real cost ~$0.16; caching off
+  ~$0.40. Fits the $0.50 default cap.
 
-Chosen: B by default (caching on, pessimistic billing), with A available
-as `cache_ttl: off` for exact bills. C (an upstream issue) is optional and not required for v1. Reading real
-spend through the Admin API was ruled out: it needs an organization admin
-key on the Hermes host, and its data lags 30 minutes to 24 hours.
+Where it is labelled: each exchange row has `estimated = 1` in the ledger;
+the call carries `estimated`; the tool result's `bill` gets
+`"estimate": true`; the footer and `/phone bill` mark the amount as an
+estimate. The plugin logs a one-time warning that bills are estimated while
+Hermes hides cache counts.
+
+`cache_ttl: off` gives an exact bill, at full input price for the whole
+transcript on every follow-up. If a later Hermes reports cache counts
+(nonzero `cache_read_tokens` or `cache_write_tokens`), those are used and
+the bill is exact.
+
+Options that were considered: (A) caching off by default, exact; (B)
+caching on, every hidden token billed as a cache write (safe but about 4x
+the real cost, so calls hit their cap early); (C) fix upstream in Hermes.
+Chosen: the estimate above, a middle ground between A and B. C is optional.
+Reading real spend through the Admin API was ruled out: it needs an
+organization admin key on the Hermes host, and its data lags 30 minutes to
+24 hours.
 
 ### 2.2 `max_tokens` (from O-3b)
 
@@ -354,11 +374,10 @@ advisor-call`, `hermes plugins validate <path>` and `hermes plugins doctor
   alternate. If it was billed, it still counts toward the message limit.
 - **A user hang-up while a reply is in flight** ends the call at once; the
   late reply's cost is still added and the call row is updated.
-- **Pre-flight with caching on** prices the whole prompt at the cache-write
-  price, matching the pessimistic bill (section 2.1). Consequence: with
-  caching on, the plugin's own count runs about 25% higher on input than
-  with caching off (2.50 vs 2.00 per MTok), so a call reaches its cap a
-  little sooner, even though the real spend is much lower.
+- **Pre-flight with caching on** is an upper bound consistent with the
+  estimate (section 2.1): the reused prefix at the input price, the rest of
+  the prompt at the cache-write price, all at the high 1/3 token ratio, plus
+  a full `max_tokens` reply.
 - **Redaction** calls Hermes' `redact_sensitive_text(text, force=True,
   redact_url_credentials=True)`, so it applies even if the user turned
   Hermes' own redaction off. Verified live: API keys and URL passwords are

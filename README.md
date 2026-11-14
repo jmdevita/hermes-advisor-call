@@ -19,12 +19,14 @@ Requires Hermes Agent **>= 0.22.0**.
 
 ## Known gaps
 
-- **The bill reads high while prompt caching is on (the default).** Hermes
-  (v0.23.1) does not pass Anthropic's cache token counts to plugins, so a
-  cached exchange cannot be billed exactly. The plugin bills on the safe
-  side: caps still hold, and `/phone bill` will read higher than the Claude
-  Console. Set `advisor.cache_ttl: off` for an exact bill, at the cost of
-  re-sending the transcript at full price on every follow-up.
+- **With prompt caching on (the default), the bill is an estimate.** Hermes
+  (v0.23.1) does not pass Anthropic's cache token counts to plugins. The
+  plugin estimates the cached part on the safe side (above the real cost,
+  close to what the call would cost without caching), and marks the amount
+  as an estimate. If Anthropic's cache misses unexpectedly, the estimate can
+  run low by about half a cent per message. Set `advisor.cache_ttl: off` for
+  an exact bill, at the cost of re-sending the transcript at full price on
+  every follow-up.
 - **Only this plugin's spend is counted.** The budget assumes the whole
   monthly amount is available to the plugin. Spend from other tools on the
   same credit is invisible; lower `budget.per_month_usd` to allow for it.

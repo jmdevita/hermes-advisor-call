@@ -47,10 +47,6 @@ class Usage:
         self.cache_write_tokens += other.cache_write_tokens
 
 
-def estimate_tokens(chars: int) -> int:
-    return int(chars / CHARS_PER_TOKEN) + 1
-
-
 def exact_cost(usage: Usage, prices: Prices) -> float:
     return (
         usage.input_tokens * prices.input
@@ -63,30 +59,101 @@ def exact_cost(usage: Usage, prices: Prices) -> float:
 @dataclass(frozen=True)
 class Charge:
     cost_usd: float
-    pessimistic: bool  # True when cache usage had to be assumed
+    estimated: bool  # True when part of the bill is an estimate (see charge())
 
 
-def charge(usage: Usage, prices: Prices, *, caching: bool, prompt_chars: int) -> Charge:
+# Cache lifetimes, with a safety margin so a prefix close to expiry is
+# treated as rewritten rather than read.
+CACHE_TTL_SECONDS = {"5m": 300.0, "1h": 3600.0}
+CACHE_TTL_MARGIN_SECONDS = 30.0
+
+
+def reusable_prefix_chars(
+    cached_chars: int, cached_at: float | None, now: float, cache_ttl: str
+) -> int:
+    """How much of the prompt we expect Anthropic to still have cached: the
+    prefix written by the previous successful exchange, if it is young
+    enough. Zero when caching is off or the entry has (or may have) expired."""
+    ttl = CACHE_TTL_SECONDS.get(cache_ttl)
+    if not ttl or cached_at is None or cached_chars <= 0:
+        return 0
+    if now - cached_at >= ttl - CACHE_TTL_MARGIN_SECONDS:
+        return 0
+    return cached_chars
+
+
+# Token-per-character ratio used to size the cached part of a prompt.
+DEFAULT_TOKENS_PER_CHAR = 1 / CHARS_PER_TOKEN
+MIN_TOKENS_PER_CHAR = 1 / 4.0  # never assume text is sparser than typical English
+MAX_TOKENS_PER_CHAR = 1 / 2.0
+MIN_CALIBRATION_CHARS = 400
+
+
+def tokens_per_char(input_tokens: int, uncached_chars: int) -> float:
+    """Ratio measured on the part of the prompt Hermes did report (the
+    uncached tail after the last cache breakpoint), clamped. Falls back to
+    the deliberately high default when the tail is too short to measure."""
+    if uncached_chars < MIN_CALIBRATION_CHARS or input_tokens <= 0:
+        return DEFAULT_TOKENS_PER_CHAR
+    ratio = input_tokens / uncached_chars
+    return min(MAX_TOKENS_PER_CHAR, max(MIN_TOKENS_PER_CHAR, ratio))
+
+
+def charge(
+    usage: Usage,
+    prices: Prices,
+    *,
+    caching: bool,
+    prompt_chars: int,
+    uncached_chars: int = 0,
+    reused_chars: int = 0,
+) -> Charge:
     """What to bill for one exchange.
 
-    Hermes v0.23.1 drops Anthropic's cache counts (DESIGN.md, O-2). When
-    caching is on and no cache counts came back, every prompt token we
-    estimate was sent but Hermes did not report as input is billed as a
-    cache write, the most expensive way it could have been billed. When
-    cache counts are present, or caching is off, the bill is exact.
+    Exact when caching is off (Hermes' input_tokens is then the whole
+    prompt) or when Hermes reports cache counts.
+
+    Otherwise an estimate. Hermes v0.23.1 drops Anthropic's cache counts
+    (DESIGN.md, O-2) and reports only the uncached tail as input. The cached
+    part (prompt_chars - uncached_chars) is sized with the token ratio
+    measured on that tail, then split using what we sent before: the reused
+    prefix (reused_chars) is billed at the normal input price, more than a
+    cache read costs; the rest at the cache-write price. An unexpected cache
+    miss under-bills only the reused prefix, by the difference between the
+    write and input prices.
     """
     if not caching or usage.cache_read_tokens or usage.cache_write_tokens:
-        return Charge(exact_cost(usage, prices), pessimistic=False)
-    unreported = max(0, estimate_tokens(prompt_chars) - usage.input_tokens)
-    assumed = Usage(usage.input_tokens, usage.output_tokens, 0, unreported)
-    return Charge(exact_cost(assumed, prices), pessimistic=unreported > 0)
+        return Charge(exact_cost(usage, prices), estimated=False)
+    cached_chars = max(0, prompt_chars - uncached_chars)
+    if cached_chars == 0:
+        return Charge(exact_cost(usage, prices), estimated=False)
+    ratio = tokens_per_char(usage.input_tokens, uncached_chars)
+    reused = int(min(reused_chars, cached_chars) * ratio)
+    written = int(cached_chars * ratio) + 1 - reused
+    cost = (
+        (usage.input_tokens + reused) * prices.input
+        + written * prices.cache_write
+        + usage.output_tokens * prices.output
+    ) / _MTOK
+    return Charge(cost, estimated=True)
 
 
-def estimate_cost(prompt_chars: int, max_tokens: int, prices: Prices, *, caching: bool) -> float:
-    """Pre-flight upper bound for one exchange: the whole prompt at the
-    highest input-side price we might bill, plus a full max_tokens reply."""
-    input_price = max(prices.input, prices.cache_write) if caching else prices.input
-    return (estimate_tokens(prompt_chars) * input_price + max_tokens * prices.output) / _MTOK
+def estimate_cost(
+    prompt_chars: int, max_tokens: int, prices: Prices, *, caching: bool, reused_chars: int = 0
+) -> float:
+    """Pre-flight upper bound for one exchange, using the same arithmetic as
+    charge() at the high default token ratio: the reused prefix at the input
+    price, the rest of the prompt at the highest input-side price we might
+    bill, plus a full max_tokens reply."""
+    ratio = DEFAULT_TOKENS_PER_CHAR
+    total = int(max(0, prompt_chars) * ratio) + 1
+    if not caching:
+        return (total * prices.input + max_tokens * prices.output) / _MTOK
+    reused = min(total, int(min(reused_chars, prompt_chars) * ratio)) if reused_chars > 0 else 0
+    rest_price = max(prices.input, prices.cache_write)
+    return (
+        reused * prices.input + (total - reused) * rest_price + max_tokens * prices.output
+    ) / _MTOK
 
 
 # --------------------------------------------------------------------------- cycle

@@ -35,7 +35,8 @@ CREATE TABLE IF NOT EXISTS exchanges (
   input_tokens INTEGER, output_tokens INTEGER,
   cache_read_tokens INTEGER, cache_write_tokens INTEGER,
   cost_usd REAL NOT NULL,
-  ok INTEGER NOT NULL
+  ok INTEGER NOT NULL,
+  estimated INTEGER NOT NULL DEFAULT 0  -- 1 when cost_usd is an estimate
 );
 CREATE INDEX IF NOT EXISTS idx_exchanges_day ON exchanges(day);
 
@@ -128,12 +129,13 @@ class Ledger:
         cache_write_tokens: int,
         cost_usd: float,
         ok: bool,
+        estimated: bool = False,
     ) -> None:
         def write(db: sqlite3.Connection) -> None:
             db.execute(
                 "INSERT INTO exchanges (ts, day, session_id, call_id, line, model, input_tokens,"
-                " output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, ok)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                " output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, ok, estimated)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     ts,
                     day_key(day),
@@ -147,6 +149,7 @@ class Ledger:
                     cache_write_tokens,
                     float(cost_usd),
                     1 if ok else 0,
+                    1 if estimated else 0,
                 ),
             )
             db.commit()
@@ -244,6 +247,18 @@ class Ledger:
             d = first + dt.timedelta(days=i)
             out.append((d, found.get(day_key(d), 0.0)))
         return out
+
+    def has_estimates(self, since: dt.date, until: dt.date) -> bool:
+        """True if any exchange in [since, until] was billed by estimate."""
+
+        def read(db: sqlite3.Connection) -> bool:
+            row = db.execute(
+                "SELECT 1 FROM exchanges WHERE estimated = 1 AND day >= ? AND day <= ? LIMIT 1",
+                (day_key(since), day_key(until)),
+            ).fetchone()
+            return row is not None
+
+        return self._run(read)
 
     def open_call_record(self, call_id: str, session_id: str) -> bool:
         """True if the ledger has this call for this session with no end

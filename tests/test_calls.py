@@ -277,3 +277,24 @@ def test_on_call_end_failure_is_contained(clock):
     mgr = CallManager(clock=clock.time, on_call_end=boom)
     mgr.open("s1", line="sonnet", cap_usd=0.5)
     assert mgr.end("s1", "hangup").end_reason == "hangup"
+
+
+def test_cached_prefix_tracked_on_success_and_cleared_on_failure(clock):
+    mgr, _ = make(clock)
+    call, _ = mgr.open("s1", line="sonnet", cap_usd=5)
+    res = mgr.reserve("s1", None, "q", ok_preflight())
+    mgr.settle(
+        res,
+        reply="a",
+        cost_usd=0.01,
+        usage=Usage(),
+        ok=True,
+        estimated=True,
+        cached_prefix_chars=12_345,
+    )
+    assert (call.cached_chars, call.cached_at) == (12_345, clock.time())
+    assert call.estimated
+    res = mgr.reserve("s1", None, "q2", ok_preflight())
+    mgr.settle(res, reply=None, cost_usd=0.0, usage=Usage(), ok=False)
+    assert (call.cached_chars, call.cached_at) == (0, None)
+    assert call.estimated  # stays marked once any part was estimated

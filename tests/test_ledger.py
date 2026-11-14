@@ -125,3 +125,26 @@ def test_transcripts(tmp_path, db_path):
     assert json.loads(files[0].read_text()) == {"role": "user", "content": "hi"}
     with pytest.raises(LedgerError):
         Ledger.at_path(db_path).append_transcript("c-1", {})
+
+
+def test_estimated_flag(db_path):
+    ledger = Ledger.at_path(db_path)
+    _exchange(ledger, D(2026, 11, 10), 0.1)
+    assert not ledger.has_estimates(D(2026, 11, 3), D(2026, 11, 14))
+    ledger.record_exchange(
+        ts=0.0,
+        day=D(2026, 11, 12),
+        session_id="s",
+        call_id="c-2",
+        line="sonnet",
+        model="m",
+        input_tokens=1,
+        output_tokens=1,
+        cache_read_tokens=0,
+        cache_write_tokens=0,
+        cost_usd=0.2,
+        ok=True,
+        estimated=True,
+    )
+    assert ledger.has_estimates(D(2026, 11, 3), D(2026, 11, 14))
+    assert not ledger.has_estimates(D(2026, 11, 13), D(2026, 11, 14))

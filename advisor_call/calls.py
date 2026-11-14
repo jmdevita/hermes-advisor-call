@@ -78,7 +78,11 @@ class Call:
     cost_usd: float = 0.0
     usage: Usage = field(default_factory=Usage)
     in_flight: bool = False
-    pessimistic: bool = False  # some of the bill assumed cache writes
+    estimated: bool = False  # part of the bill is an estimate (cache usage hidden)
+    # Prompt prefix (in characters) the last successful exchange left in
+    # Anthropic's cache, and when. Used to estimate cache reads.
+    cached_chars: int = 0
+    cached_at: float | None = None
 
     @property
     def is_open(self) -> bool:
@@ -325,11 +329,16 @@ class CallManager:
         cost_usd: float,
         usage: Usage,
         ok: bool,
-        pessimistic: bool = False,
+        estimated: bool = False,
+        cached_prefix_chars: int = 0,
     ) -> Settled:
         """Record one exchange. On success the executor message and the reply
         are appended; on failure the conversation is left unchanged. Cost is
-        added either way. Ends the call when it reaches its cap."""
+        added either way. Ends the call when it reaches its cap.
+
+        cached_prefix_chars: on success, the prompt prefix this request left
+        in the cache (through its last cache breakpoint). After a failure we
+        assume nothing is cached, which can only raise the next estimate."""
         ended: list[Call] = []
         call = res.call
         with self._lock:
@@ -338,7 +347,12 @@ class CallManager:
             call.last_activity = self._clock()
             call.cost_usd += max(0.0, cost_usd)
             call.usage.add(usage)
-            call.pessimistic = call.pessimistic or pessimistic
+            call.estimated = call.estimated or estimated
+            if ok and reply:
+                call.cached_chars = max(0, cached_prefix_chars)
+                call.cached_at = call.last_activity
+            else:
+                call.cached_chars, call.cached_at = 0, None
             if ok and reply:
                 call.messages.extend(
                     [{"role": "user", "content": res.text}, {"role": "assistant", "content": reply}]
