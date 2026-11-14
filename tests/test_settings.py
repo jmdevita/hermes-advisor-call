@@ -10,7 +10,7 @@ def test_defaults_when_empty():
     assert s.default_line == "sonnet"
     sonnet = s.line(None)
     assert sonnet.usable and sonnet.provider == "anthropic" and sonnet.model == "claude-sonnet-5-5"
-    assert sonnet.prices.cache_read == 0.10  # DESIGN.md O-11, not the plan's 0.20
+    assert sonnet.prices.cache_read == 0.10  # DESIGN.md O-11
     assert s.cache_ttl == "5m" and s.caching
     assert s.budget.per_month_usd == 100.0 and s.budget.pacing == "dynamic"
     assert s.max_tokens == 4000

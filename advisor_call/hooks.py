@@ -1,6 +1,6 @@
 """Hermes hooks and middleware.
 
-- pre_tool_call: the approval gate for advisor_call_open (plan 7.3). Fast:
+- pre_tool_call: the approval gate for advisor_call_open (DESIGN.md 2.5). Fast:
   a config read and an indexed ledger read, no network.
 - pre_llm_call: remember the conversation and sender per session; tell the
   executor once that the user pre-authorized calls.

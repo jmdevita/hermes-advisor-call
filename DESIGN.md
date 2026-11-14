@@ -1,7 +1,10 @@
 # advisor-call: design notes
 
-This file records what was verified in the Hermes source and how it changes
-the build plan. It grows into the trimmed design document by release.
+How the plugin is built and why. Section 1 answers the questions that had to
+be settled by reading the Hermes source before writing code; section 2
+records the design decisions they led to; sections 3 to 5 are implementation
+notes per build phase. Test ids used in the code and below (U-n for unit
+tests, L-n for live checks) are listed in Appendix A.
 
 **Reference:** Hermes Agent `v0.23.1` (commit `3b421578`). Line numbers drift
 between releases; search by name. "Verified" means read in the source and,
@@ -10,7 +13,7 @@ network). "Inferred" means read but not exercised.
 
 ---
 
-## 1. Open items (plan section 12)
+## 1. Open items
 
 ### O-1 Do caller-set `cache_control` markers reach Anthropic?
 
@@ -26,7 +29,7 @@ as `{"type": "ephemeral", "ttl": "1h"}`, with no markers added by Hermes.
   the last surviving block; consecutive same-role messages are merged.
   Markers on thinking blocks are removed.
 - Hermes does not enforce Anthropic's 4-breakpoint limit on this path. We
-  use at most 2 (plan 7.5), so this is not a concern.
+  use at most 2 (opening message and latest reply), so this is not a concern.
 - **Caveat:** if the primary call fails and Hermes' recovery ladder moves to
   another route, `_replan_synchronous_cache_sections` may strip or re-plan
   markers. See section 2.4.
@@ -219,7 +222,7 @@ From Anthropic's published pricing (via the Claude API reference, cached
 |---|---|
 | Input | 2.00 |
 | Output | 10.00 |
-| Cache read | **0.10** (the plan said 0.20) |
+| Cache read | **0.10** |
 | Cache write, 5 minutes | 2.50 (1.25x input) |
 | Cache write, 1 hour | 4.00 (2x input) |
 
@@ -227,7 +230,7 @@ Minimum cacheable prefix on Sonnet 5.5: **512 tokens**.
 
 ---
 
-## 2. Changes to the plan
+## 2. Design decisions
 
 ### 2.1 Caching and billing (from O-2): **decided, known gap, billed by estimate**
 
@@ -304,7 +307,7 @@ organization admin key on the Hermes host, and its data lags 30 minutes to
 - Because `extra_body` is fixed at registration, a change to
   `advisor.max_tokens` needs a restart.
 - Sonnet 5.5 thinks by default and thinking counts against `max_tokens`.
-  The empty-text guard (plan 7.5) stays.
+  An empty reply is therefore treated as an error, never as advice.
 
 ### 2.3 Tool visibility (from O-10)
 
@@ -331,7 +334,7 @@ and is not the advisor the user approved.
   `InvalidProviderResponseError` can all surface. The handler catches
   `Exception` and reports "advisor unavailable: <type>: <message>".
 
-### 2.5 Approval (plan 3.1), confirmed with three additions
+### 2.5 Approval, confirmed with three additions
 
 Confirmed: `approve` routes to the human gate keyed `plugin_rule:<rule_key>`;
 deny, timeout and gate errors fail closed; `block` beats `approve`; plugin
@@ -339,7 +342,7 @@ rules skip the smart approver; no human present blocks.
 
 - **`approvals.mode` defaults to `smart`.** Values are `manual`, `smart`,
   `off`. Plugin rules still reach the human under `smart`.
-- **More bypasses than the plan listed.** The gate auto-approves under
+- **More bypasses than first expected.** The gate auto-approves under
   CLI `--yolo`, gateway `/yolo`, `approvals.mode: off`, and one-shot
   `hermes -z` turns. Cron, `-q` and unattended platforms auto-approve only
   if their `*_mode` is set to `approve` (default `deny`). The YOLO and `-z`
@@ -383,7 +386,7 @@ advisor-call`, `hermes plugins validate <path>` and `hermes plugins doctor
 
 ## 3. Implementation notes (Phase 1)
 
-- **Call ids** are `c-` plus 8 hex characters (the plan's 4 would collide in
+- **Call ids** are `c-` plus 8 hex characters (4 would eventually collide in
   the ledger's `calls` primary key over months of use).
 - **Concurrent sessions.** Every exchange reserves its pre-flight estimate
   while it is in flight. Other sessions' pre-flight checks add those
@@ -407,7 +410,7 @@ advisor-call`, `hermes plugins validate <path>` and `hermes plugins doctor
 
 ## 4. Implementation notes (Phase 2)
 
-- **`runtime.py`** (not in the plan's layout) holds the shared state: call
+- **`runtime.py`** holds the shared state: call
   manager, ledger, captured context, settings and `ctx.llm` accessors. Tools,
   hooks and `/second-opinion` all go through one `Runtime`, which tests build with
   fakes.
@@ -458,3 +461,73 @@ advisor-call`, `hermes plugins validate <path>` and `hermes plugins doctor
   can import the repo root outside a package.
 - **Source files must not contain invisible characters.** Hermes' security
   scan flags them; the reason sanitiser builds its pattern from code points.
+
+---
+
+## Appendix A: test ids
+
+### Unit tests (CI, no Hermes, no network)
+
+| ID | Test |
+|---|---|
+| U-1 | Settings merge over defaults; unknown keys ignored; invalid values fall back with a warning |
+| U-2 | Cost from usage matches hand-computed values, including cache read and cache write |
+| U-3 | The pre-flight estimate is at least the billed cost for representative inputs |
+| U-4 | Ledger writes and day totals; a new day resets the total |
+| U-5 | A ledger read failure makes opening a call fail closed |
+| U-6 | A call ends with `bill_cap` when the estimate would exceed the cap, and nothing is sent |
+| U-7 | A call ends with `day_cap` across two calls on the same day |
+| U-8 | `turn_limit` is enforced at `max_messages_per_call` |
+| U-9 | Idle expiry with a fake clock |
+| U-10 | One open call per session; a second open returns the first |
+| U-11 | Session isolation: session B cannot read, speak on, or hang up session A's call, and a wrong `call_id` never resolves to another session |
+| U-12 | Transcript rendering: system skipped, tool output cut head and tail, tail kept at the limit, in-flight advisor tool call excluded, redaction applied |
+| U-13 | Opening message layout: system + transcript + question; breakpoint A present |
+| U-14 | Third exchange: breakpoints on the opening and the last reply only; never more than 2 |
+| U-15 | `cache_ttl: off` produces no markers; `1h` adds the ttl field |
+| U-16 | An empty advisor reply is an error and is not appended to the call |
+| U-17 | An advisor exception returns an error result; the call stays open; nothing raises out of the handler |
+| U-18 | `advisor_call_open` returns the reply and the bill |
+| U-19 | `advisor_call_hangup` makes no LLM call and returns the final bill |
+| U-20 | A handler called without `session_id` returns an error |
+| U-21 | The approval hook returns `None` for other tools |
+| U-22 | The hook returns `approve` with `rule_key == "advisor_call:<line>:<session_id>"` |
+| U-23 | The hook blocks when today's allowance or the cycle budget is used up |
+| U-24 | The hook returns `None` after `/second-opinion allow`, and `approve` again after `/second-opinion revoke` |
+| U-25 | The hook blocks a sender outside `allowed_senders` |
+| U-26 | The hook blocks when approvals are off and there is no user grant; allows with a grant |
+| U-27 | The model-written reason is sanitized and truncated in the approval message |
+| U-28 | `/second-opinion` subcommands: status, allow with a custom cap clamped to the day's remainder, ask, hangup, bill, transcript |
+| U-29 | The bill footer is added only on turns with advisor activity |
+| U-30 | `register()` registers every tool, hook, the middleware, the command, the guidance section and one auxiliary task per line |
+| U-31 | Dynamic allowance: day 1 of a 30-day cycle at $100 gives $3.33; after 10 days without spend, $5.00; the last day gives the whole remainder |
+| U-32 | The allowance does not change during a day as spend accrues; `max_per_day_usd` clamps it; it never goes below 0 |
+| U-33 | Cycle boundaries: `cycle_start_day: 31` in 30-day months and February; spend from the previous cycle is excluded |
+| U-34 | The cycle total is a hard limit in both pacing modes; `pacing: fixed` uses `per_day_usd` |
+| U-35 | Dynamic per-call cap: $0.50 at the baseline allowance, $0.75 at 1.5x, $1.50 at 3x; clamped by `max_per_call_usd` and what is left today; fixed pacing keeps `per_call_usd` |
+| U-36 | The per-call cap is fixed when the call opens; the approval message shows that cap |
+| U-37 | Missing or invalid `cycle_start_day`: the hook blocks, `/second-opinion ask` and `allow` refuse, `/second-opinion status` shows the setup message |
+| U-38 | `cycle_start_day: 3`: on Nov 14 the window is Nov 3 to Dec 2 with 19 days left; Dec 2 is the last day; Dec 3 starts a new cycle with zero spend |
+
+### Live checks (a real Hermes and the real API)
+
+| ID | Check | Expected |
+|---|---|---|
+| L-1 | `hermes plugins list`, `hermes plugins capabilities advisor-call` | Enabled, no load error, no private-import warning |
+| L-2 | `/second-opinion status` in Telegram | The sonnet line, $0.00 today, today's allowance, the per-call cap and the cycle window; the window's end matches the credit expiry date in the Claude Console |
+| L-2b | Remove `cycle_start_day`, then try a call | Refused with the setup message |
+| L-3 | Ask the executor for a second opinion | An approval prompt with the reason and caps (record whether the executor found the tool through tool search) |
+| L-4 | Tap Deny | No API call; the executor reports the refusal and does not retry |
+| L-5 | Approve once, run three or more messages, hang up | Replies come back; the footer shows the bill, marked as an estimate |
+| L-6 | Compare the Console's usage for the messages of L-5 | Cache reads appear on messages 2 and 3 (the plugin cannot see them: DESIGN.md O-2) |
+| L-7 | Tap Session, then trigger a second call in the same session | No second prompt |
+| L-8 | Tap Always in one session, start a new session, trigger a call | The prompt appears again |
+| L-9 | Set `per_call_usd: 0.03`, run a call | The call ends with `bill_cap`; the executor is told to continue alone |
+| L-10 | Send a message, then `/second-opinion allow`, then ask the executor to call | No prompt; the executor was told it is pre-authorized |
+| L-11 | `/second-opinion ask <question>`; `/second-opinion hangup` during an open call | A direct reply; the call ends and the executor is told |
+| L-12 | Compare `/second-opinion bill` with the Console for the same period | Within the estimate's bounds (DESIGN.md 2.1); record the difference |
+| L-13 | A deliberately long question with `advisor.max_tokens: 300` (restart after changing it) | At most 300 output tokens in the Console |
+
+Also confirm once: with `approvals.mode: smart`, the approval still reaches
+the human.
+

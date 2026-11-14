@@ -299,7 +299,7 @@ def test_custom_cap_replaces_but_is_clamped():
 
 
 def test_mid_cycle_install_example():
-    # Plan 7.6: installed Nov 14, cycle_start_day 3 -> $100/19, cap ~ $0.79.
+    # Installed mid-cycle on Nov 14 with cycle_start_day 3: $100/19, cap ~ $0.79.
     b = parse_settings({"budget": {"cycle_start_day": 3}}).budget
     s = budget_state(b, D(2026, 11, 14), spent_today=0, spent_before_today=0)
     assert s.allowance == pytest.approx(100 / 19)

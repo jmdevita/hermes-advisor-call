@@ -1,4 +1,4 @@
-"""The /second-opinion slash command (plan 7.8).
+"""The /second-opinion slash command.
 
 The handler is sync on purpose: /second-opinion ask waits for the advisor, and
 Hermes bounds async command results at 30 s on the CLI (DESIGN.md, O-8).

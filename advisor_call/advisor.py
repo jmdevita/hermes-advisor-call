@@ -1,6 +1,6 @@
 """Advisor requests: message layout, cache markers, the ctx.llm call.
 
-Layout for exchange n (plan 7.5):
+Layout for exchange n:
 
     system:    ADVISOR_SYSTEM                                  (static)
     user:      <transcript>...</transcript><executor_message>   <- breakpoint A
