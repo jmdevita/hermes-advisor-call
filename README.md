@@ -80,15 +80,24 @@ month. Find the date under the credit's expiry on the Claude Console billing
 page. `/second-opinion status` prints the resolved cycle (for example
 "Cycle: Nov 3 to Dec 2 (19 days left)") so you can compare.
 
-To upgrade to the latest release, or to a pinned one:
+To upgrade, it depends on how you installed:
 
-```bash
-hermes plugins install jmdevita/hermes-advisor-call --force
-```
+- **Installed without `--ref`** (follows `main`, which only holds releases):
 
-```bash
-hermes plugins install jmdevita/hermes-advisor-call --force --ref <full-commit-id>
-```
+  ```bash
+  hermes plugins update advisor-call
+  ```
+
+- **Installed with `--ref`** (pinned): `update` refuses to move a pin, and a
+  reinstall without `--ref` keeps the old one. Move it explicitly:
+
+  ```bash
+  hermes plugins install jmdevita/hermes-advisor-call --force --ref <full-commit-id>
+  ```
+
+To switch a pinned install to following `main`, remove it with
+`hermes plugins remove advisor-call` and install again without `--ref`. Your
+settings in `config.yaml` and the spend ledger in `plugin-data/` are kept.
 
 ## Configuration
 
