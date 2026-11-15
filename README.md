@@ -286,6 +286,10 @@ scripts/hermes-smoke.sh  # load this checkout into a real Hermes and run its plu
 scripts/hermes-e2e.sh    # full call through real Hermes against a local fake Anthropic server (no spend)
 ```
 
+CI is not active yet: the GitHub Actions workflow is kept in
+`ci/github-actions.yml`. Move it to `.github/workflows/ci.yml` to turn it
+on; it runs the same checks as `scripts/ci.sh`.
+
 The two Hermes scripts expect a Hermes checkout with a virtual environment
 next to this repo (`../hermes-agent-ref/.venv`), or the path to its `hermes`
 or `python` as the first argument.
