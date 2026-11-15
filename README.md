@@ -42,8 +42,13 @@ is unaffected.
 ## Install
 
 Plugins are per profile: install it only in the profile that should be
-able to spend money. Hermes requires `--ref` to be a full 40-character
-commit id (a tag name is refused), so pin the commit of a release:
+able to spend money.
+
+`main` only ever holds released versions; development happens on the `beta`
+branch. Installing without `--ref` therefore gets the latest release. To pin
+an exact version (recommended for a plugin that spends money), pass the
+release's commit id; Hermes requires a full 40-character commit id for
+`--ref` and refuses tag names:
 
 ```bash
 hermes plugins install jmdevita/hermes-advisor-call --ref 9312e7ccedb5d32f4c98c5df0127541de71b1c02 --no-enable
@@ -75,7 +80,11 @@ month. Find the date under the credit's expiry on the Claude Console billing
 page. `/second-opinion status` prints the resolved cycle (for example
 "Cycle: Nov 3 to Dec 2 (19 days left)") so you can compare.
 
-To upgrade:
+To upgrade to the latest release, or to a pinned one:
+
+```bash
+hermes plugins install jmdevita/hermes-advisor-call --force
+```
 
 ```bash
 hermes plugins install jmdevita/hermes-advisor-call --force --ref <full-commit-id>
@@ -306,6 +315,10 @@ have been processed and billed anyway.
 | The bill is higher than the Console | Expected while caching is on: the estimate is on the safe side |
 
 ## Development
+
+Work happens on the `beta` branch; `main` is fast-forwarded to it for each
+release, which is then tagged. To try unreleased changes, install a commit
+from `beta` with `--ref`.
 
 No runtime dependencies. Tests run without Hermes installed.
 
