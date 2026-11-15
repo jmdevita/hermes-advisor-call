@@ -65,7 +65,8 @@ def test_ask(cmd, runtime, fake_llm):
     runtime.context.record_turn(SID, conversation_history=[], user_message="context here")
     fake_llm.script(reply("Direct answer."))
     out = run(cmd, "ask is this approach sound?")
-    assert out.startswith("Direct answer.") and "📞 Call c-" in out and "ended (hung up)" in out
+    assert out == "Direct answer."  # just the answer; the cost shows in status and bill
+    assert "ended (hung up), 1 message," in run(cmd, "status")  # not "1 messages"
     sent = fake_llm.calls[0].messages[1]["content"][0]["text"]
     assert "from the user" in sent and "context here" in sent
     assert runtime.manager.latest(SID).initiated_by == "user"
@@ -157,3 +158,13 @@ def test_no_session_and_unknown(cmd):
 def test_command_never_raises(cmd, runtime):
     runtime._settings = lambda: 1 / 0
     assert "failed: ZeroDivisionError" in run(cmd, "status")
+
+
+def test_command_name_matches_the_platform(cmd, runtime):
+    def on(platform, args):
+        return cmd(args, session_id=SID, session_key="k", platform=platform, source=None)
+
+    telegram = on("telegram", "allow")
+    assert "/second_opinion revoke" in telegram and "/second-opinion" not in telegram
+    assert "/second_opinion ask" in on("telegram", "dance")  # the usage text too
+    assert "/second-opinion" in on("cli", "dance")

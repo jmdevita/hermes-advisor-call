@@ -14,13 +14,13 @@ from .calls import Call, CallError, end_reason_text
 from .cost import call_cap
 from .hooks import money, sender_allowed
 from .ledger import LedgerError
+from .prompts import COMMAND, for_platform
 from .runtime import Runtime
 from .settings import Settings
 from .tools import open_call
 
 log = logging.getLogger(__name__)
 
-COMMAND = "second-opinion"  # Telegram shows it as /second_opinion
 FALLBACK_COMMAND = "advisorcall"
 ARGS_HINT = "[status|allow|revoke|ask|hangup|bill|transcript]"
 DESCRIPTION = "Advisor calls: status, pre-authorize, ask directly, hang up, see the bill"
@@ -43,6 +43,10 @@ def _sender(source: Any) -> str:
     return str(uid) if uid else ""
 
 
+def plural(count: int, word: str) -> str:
+    return f"{count} {word}{'' if count == 1 else 's'}"
+
+
 def _clip(text: str, limit: int = CHAT_LIMIT) -> str:
     return text if len(text) <= limit else text[: limit - 20].rstrip() + "\n…[truncated]"
 
@@ -61,10 +65,11 @@ class SecondOpinionCommand:
         **_: Any,
     ) -> str:
         try:
-            return self.dispatch(str(raw_args or ""), session_id or None, source)
+            text = self.dispatch(str(raw_args or ""), session_id or None, source)
         except Exception as exc:  # noqa: BLE001 - a command must never crash the chat
             log.exception("advisor-call: /second-opinion failed")
-            return f"/{COMMAND} failed: {type(exc).__name__}: {exc}"
+            text = f"/{COMMAND} failed: {type(exc).__name__}: {exc}"
+        return for_platform(text, platform)
 
     # ----------------------------------------------------------------- dispatch
 
@@ -129,7 +134,7 @@ class SecondOpinionCommand:
         cost = f"~{money(call.cost_usd)} (estimate)" if call.estimated else money(call.cost_usd)
         status = "open" if call.is_open else f"ended ({end_reason_text(call.end_reason)})"
         return (
-            f"Call {call.call_id} ({call.line}): {status}, {call.exchanges} messages, "
+            f"Call {call.call_id} ({call.line}): {status}, {plural(call.exchanges, 'message')}, "
             f"{cost} of {money(call.cap_usd)}"
         )
 
@@ -232,8 +237,8 @@ class SecondOpinionCommand:
         self.rt.manager.take_activity(session_id)  # no executor footer for the user's own ask
         if "error" in result and "reply" not in result:
             return f"Advisor unavailable: {result['error']}"
-        footer = self._call_line(call) if call is not None else ""
-        return _clip(f"{result.get('reply', '')}\n\n📞 {footer}".strip())
+        # Just the answer: the call's cost shows in /second-opinion status and bill.
+        return _clip(str(result.get("reply", "")).strip())
 
     def hangup(self, settings: Settings, session_id: str, _: str) -> str:
         try:

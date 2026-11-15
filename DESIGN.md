@@ -499,6 +499,12 @@ installed from `c6fc519`.
 | L-4 | Pass | Deny: nothing sent, the executor reported the refusal and did not retry |
 | L-5 | Pass (second attempt) | First attempt: Anthropic returned 400 "This API key is not scoped to a workspace", because the key was created with Organization scope. The plugin handled it as designed: $0.00 billed, the call ended with reason `error`, the bill footer shown, no invented advice. With a workspace-scoped key: approved once, 2 messages (open, then the executor ran checks on the machine and sent the results), hung up by the executor; footer `2 messages · ~$0.13 of $0.79 (estimate) · ended (hung up) · today $0.13 of $5.26`; `/second_opinion bill` shows $0.13 today and "(includes estimates)". The advice was substantive (it caught a symlinked directory a backup tool would have skipped) |
 | L-6, L-12 | Pending | Compare with the Console's usage for the key: real cost should be at or below the estimate; cache reads on message 2 |
+| L-7 | Pass | Tapped Session; a second call in the same chat ran with no prompt |
+| L-8 | Pass | Tapped Always in one session; after `/new` the prompt appeared again (the session id in the rule key works) |
+| L-9 | Pass | With `per_call_usd: 0.01` (scaled to about $0.016 by dynamic pacing) the call ended with "bill cap reached" before anything was sent. $0.01 rather than $0.03: at $0.03 the scaled cap (~$0.05) sits right at the cost of one opening message, so the outcome is not deterministic |
+| L-10 | Pass | `/second_opinion allow`, then a call ran with no prompt |
+| L-11 | Pass | `/second_opinion ask` answered directly; `/second_opinion hangup` during an executor call ended it and the executor stopped |
+| L-13 | Pending | Reply limit against the real API |
 
 Findings so far:
 
@@ -509,6 +515,14 @@ Findings so far:
   VM uses 60 seconds. An unanswered prompt does not run.
 - The footer read "ended (ended after an error)"; end-reason texts no
   longer start with "ended".
+- **The executor imitated the bill footer** after seeing it in history, so
+  a reply ended with two `📞` lines. The guidance now tells it not to write
+  one; the plugin adds it.
+- **Command names in messages follow the platform**: Telegram users see
+  `/second_opinion`, not `/second-opinion` (which Telegram cannot type).
+- **`/second-opinion ask` returns only the answer** (maintainer's request);
+  the call's cost shows in `status` and `bill`.
+- "1 messages" is now "1 message" in `status`.
 
 ---
 

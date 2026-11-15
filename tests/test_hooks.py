@@ -307,3 +307,18 @@ def test_footer_wording_has_no_doubled_ended(hooks, runtime):
     from advisor_call.calls import END_REASON_TEXT
 
     assert not [t for t in END_REASON_TEXT.values() if t.startswith("ended")]
+
+
+def test_approvals_off_message_uses_the_platform_command_name(hooks, runtime, approvals):
+    approvals["mode"] = "off"
+    runtime.context.record_turn(
+        SID, conversation_history=[], user_message="hi", sender_id="42", platform="telegram"
+    )
+    assert "/second_opinion allow" in gate(hooks)["message"]
+
+
+def test_guidance_tells_the_executor_not_to_write_the_bill_line():
+    from advisor_call.prompts import EXECUTOR_GUIDANCE
+
+    assert "Do not write a bill line" in EXECUTOR_GUIDANCE
+    assert len(EXECUTOR_GUIDANCE) < 4000  # Hermes' per-section limit

@@ -2,7 +2,22 @@
 prompt cache: the executor's (system prompt section) or the advisor's
 (system prompt at the front of every advisor request)."""
 
+from typing import Any
+
 SYSTEM_PROMPT_SECTION_ID = "advisor-call"
+
+COMMAND = "second-opinion"
+# Telegram command names cannot contain "-": Hermes registers the command
+# there as /second_opinion and maps it back on input.
+TELEGRAM_COMMAND = COMMAND.replace("-", "_")
+
+
+def for_platform(text: str, platform: Any) -> str:
+    """Write the slash command the way the user types it on their platform."""
+    if isinstance(platform, str) and platform.lower() == "telegram":
+        return text.replace(f"/{COMMAND}", f"/{TELEGRAM_COMMAND}")
+    return text
+
 
 ADVISOR_SYSTEM = """\
 You are a senior advisor on a call with another AI agent (the executor). The
@@ -38,8 +53,9 @@ Before calling, tell the user in one sentence why. The user must approve. \
 The advisor has no tools and sees only a transcript plus what you send, so \
 include exact errors and code. Ask specific questions, do the work yourself \
 between messages with `advisor_call_say`, and hang up with \
-`advisor_call_hangup` when you have what you need. Report the outcome and \
-cost to the user."""
+`advisor_call_hangup` when you have what you need. Report the outcome to \
+the user. Do not write a bill line (one starting with the phone emoji) \
+yourself: the plugin adds it to your reply automatically."""
 
 NO_TRANSCRIPT_NOTE = "(No transcript of the session was captured; rely on the message below.)"
 

@@ -22,6 +22,7 @@ from typing import Any
 from .calls import Call, CallError, end_reason_text
 from .cost import call_cap
 from .ledger import LedgerError
+from .prompts import for_platform
 from .runtime import Runtime
 from .settings import Settings
 from .tools import OPEN, SAY
@@ -77,6 +78,11 @@ def sender_allowed(settings: Settings, identity: tuple[str, str] | None) -> bool
     if sender:
         return sender in settings.allowed_senders
     return platform.lower() in LOCAL_PLATFORMS
+
+
+def _platform(rt: Runtime, session_id: Any) -> str:
+    identity = rt.context.identity(session_id)
+    return identity[1] if identity else ""
 
 
 def money(value: float) -> str:
@@ -166,7 +172,11 @@ class Hooks:
             and grant is None
         ):
             return _block(
-                "Approvals are off, so advisor calls need `/second-opinion allow` from the user."
+                for_platform(
+                    "Approvals are off, so advisor calls need `/second-opinion allow` "
+                    "from the user.",
+                    _platform(rt, session_id),
+                )
             )
         # 7. Pre-authorized by the user for this session and line.
         if grant is not None:
