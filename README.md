@@ -96,8 +96,10 @@ To upgrade, it depends on how you installed:
   ```
 
 To switch a pinned install to following `main`, remove it with
-`hermes plugins remove advisor-call` and install again without `--ref`. Your
-settings in `config.yaml` and the spend ledger in `plugin-data/` are kept.
+`hermes plugins remove advisor-call` and install again without `--ref`, then
+enable it. **Removing deletes its settings** (`plugins.entries.advisor-call`
+and its `enabled` entry in `config.yaml`), so copy them first and add them
+back. The spend ledger in `plugin-data/advisor-call/` is kept.
 
 ## Configuration
 
