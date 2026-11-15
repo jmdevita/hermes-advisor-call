@@ -198,7 +198,7 @@ def test_capture_prefers_newest_snapshot():
     assert store.messages("s1") is mid_turn  # stored by reference
     store.record_turn("s1", conversation_history=[], user_message="next turn")
     assert store.messages("s1") == [{"role": "user", "content": "next turn"}]
-    assert store.sender("s1") == ("42", "telegram")
+    assert store.identity("s1") == ("42", "telegram")
 
 
 def test_capture_does_not_duplicate_user_message():
@@ -214,5 +214,5 @@ def test_capture_isolated_and_bounded():
         store.record_turn(sid, conversation_history=[], user_message=sid)
     assert store.messages("a") == []  # evicted
     assert store.messages("c") == [{"role": "user", "content": "c"}]
-    assert store.messages(None) == [] and store.sender("missing") == ("", "")
+    assert store.messages(None) == [] and store.identity("missing") is None
     store.record_request(None, [])  # ignored, no error

@@ -5,10 +5,12 @@ lets a cheap or local main model **get a second opinion from a stronger
 advisor model**, as a multi-message consult with human approval per call and
 hard bill caps.
 
-> **Status: pre-release.** Built and tested against Hermes v0.23.1 (unit
-> tests, Hermes' own plugin checks, and an end-to-end run through a real
-> Hermes against a local fake Anthropic server). Not yet run against the
-> real API. See [DESIGN.md](DESIGN.md) for what has been verified.
+> **Status: pre-release, live testing in progress.** Built and tested
+> against Hermes v0.23.1 (unit tests, Hermes' own plugin checks, and an
+> end-to-end run through a real Hermes against a local fake Anthropic
+> server). The core flow (approval, deny, a multi-message call through
+> Telegram, the bill) works against the real API; the remaining live checks
+> are listed in [DESIGN.md](DESIGN.md) section 7.
 
 ## How it works
 

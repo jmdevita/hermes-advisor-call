@@ -239,7 +239,7 @@ def test_pre_llm_call_records_and_notifies_once(hooks, runtime):
         is_first_turn=True,
     )
     assert out is None
-    assert runtime.context.sender(SID) == ("42", "telegram")
+    assert runtime.context.identity(SID) == ("42", "telegram")
     runtime.manager.grant(SID, line="sonnet", cap_usd=0.4)
     out = hooks.pre_llm_call(session_id=SID, conversation_history=[], user_message="next")
     assert out == {

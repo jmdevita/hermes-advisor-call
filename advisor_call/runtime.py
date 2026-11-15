@@ -50,7 +50,7 @@ class Runtime:
         self.context = context or ContextStore()
         self._redactor_factory = redactor
         self._redactor: Redactor | None = None
-        self.manager = CallManager(clock=self.clock.time, on_call_end=self._persist_call)
+        self.manager = CallManager(clock=self.clock.time, on_call_end=self.persist_call)
         self._lock = threading.Lock()
         # One-shot authorizations left by the approval hook, per session.
         self._authorizations: OrderedDict[str, tuple[str, float]] = OrderedDict()
@@ -151,7 +151,8 @@ class Runtime:
 
     # ----------------------------------------------------------------- persistence
 
-    def _persist_call(self, call: Call) -> None:
+    def persist_call(self, call: Call) -> None:
+        """Write the call's row to the ledger; a failure is logged, never raised."""
         try:
             self.ledger.record_call(
                 call_id=call.call_id,

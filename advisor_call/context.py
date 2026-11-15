@@ -129,14 +129,6 @@ class ContextStore:
             ctx = self._sessions.get(session_id)
             return (ctx.sender_id, ctx.platform) if ctx is not None and ctx.seen else None
 
-    def sender(self, session_id: str | None) -> tuple[str, str]:
-        """(sender_id, platform), empty strings when unknown."""
-        if not session_id:
-            return "", ""
-        with self._lock:
-            ctx = self._sessions.get(session_id)
-            return (ctx.sender_id, ctx.platform) if ctx else ("", "")
-
     def forget(self, session_id: str | None) -> None:
         if session_id:
             with self._lock:

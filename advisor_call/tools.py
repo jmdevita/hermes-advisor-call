@@ -498,7 +498,7 @@ def open_call(
             "note": "A call is already open in this session; continue with advisor_call_say.",
             "bill": rt.bill(call, settings),
         }
-    rt._persist_call(call)  # an open row lets a restart be told apart from a wrong id
+    rt.persist_call(call)  # an open row lets a restart be told apart from a wrong id
 
     result = exchange(
         rt,
