@@ -11,7 +11,7 @@ import re
 from typing import Any
 
 from .calls import Call, CallError, end_reason_text
-from .cost import call_cap, cycle_for
+from .cost import call_cap
 from .hooks import money, sender_allowed
 from .ledger import LedgerError
 from .runtime import Runtime
@@ -246,13 +246,10 @@ class SecondOpinionCommand:
         out = self._budget_lines(settings)
         if settings.budget.cycle_error:
             return "\n".join(out)
-        today = self.rt.today()
-        cycle = cycle_for(today, settings.budget.cycle_start_day)  # type: ignore[arg-type]
         try:
-            rows = self.rt.ledger.daily_totals(today, 7)
+            rows = self.rt.ledger.daily_totals(self.rt.today(), 7)
         except LedgerError as exc:
             return "\n".join([*out, f"Daily totals unavailable: {exc}"])
-        out.append(f"Days left in cycle: {cycle.days_left(today)}")
         out.append("Last 7 days:")
         out += [f"  {d:%a %b} {d.day}: {money(v)}" for d, v in rows]
         return "\n".join(out)

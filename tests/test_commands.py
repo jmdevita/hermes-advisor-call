@@ -115,7 +115,8 @@ def test_bill(cmd, runtime):
     )
     out = run(cmd, "bill")
     assert "Today: $0.42 of $" in out and "(includes estimates)" in out
-    assert "Days left in cycle: 19" in out and "Last 7 days:" in out
+    assert "Cycle: Nov 3 to Dec 2 (19 days left)" in out and "Last 7 days:" in out
+    assert "Days left in cycle" not in out  # the Cycle line already says it
     assert "Sat Nov 14: $0.42" in out and "Sun Nov 8: $0.00" in out
 
 

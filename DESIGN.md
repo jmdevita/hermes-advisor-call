@@ -497,7 +497,8 @@ installed from `c6fc519`.
 | L-2 | Pass | `/second_opinion status`: $5.26 allowance ($100 / 19 days), $0.79 per-call cap, cycle Nov 3 to Dec 2, matching the Console's next credit date (Dec 3) |
 | L-3 | Pass | The executor found `advisor_call_open` through `tool_search` and called it through `tool_call` (O-10 confirmed live). Hermes showed the approval prompt with the plugin's text under "Why it was flagged" |
 | L-4 | Pass | Deny: nothing sent, the executor reported the refusal and did not retry |
-| L-5 | Blocked, then fixed on the key | First attempt: Anthropic returned 400 "This API key is not scoped to a workspace", because the key was created with Organization scope. The plugin handled it as designed: $0.00 billed, the call ended with reason `error`, the bill footer shown, no invented advice. A workspace-scoped key is required; the error now carries that hint and the README lists it |
+| L-5 | Pass (second attempt) | First attempt: Anthropic returned 400 "This API key is not scoped to a workspace", because the key was created with Organization scope. The plugin handled it as designed: $0.00 billed, the call ended with reason `error`, the bill footer shown, no invented advice. With a workspace-scoped key: approved once, 2 messages (open, then the executor ran checks on the machine and sent the results), hung up by the executor; footer `2 messages · ~$0.13 of $0.79 (estimate) · ended (hung up) · today $0.13 of $5.26`; `/second_opinion bill` shows $0.13 today and "(includes estimates)". The advice was substantive (it caught a symlinked directory a backup tool would have skipped) |
+| L-6, L-12 | Pending | Compare with the Console's usage for the key: real cost should be at or below the estimate; cache reads on message 2 |
 
 Findings so far:
 
