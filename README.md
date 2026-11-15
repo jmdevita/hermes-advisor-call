@@ -42,10 +42,17 @@ is unaffected.
 ## Install
 
 Plugins are per profile: install it only in the profile that should be
-able to spend money. Pin `--ref` to a release tag (or a commit).
+able to spend money. Hermes requires `--ref` to be a full 40-character
+commit id (a tag name is refused), so pin the commit of a release:
 
 ```bash
-hermes plugins install jmdevita/hermes-advisor-call --ref v0.1.0 --no-enable
+hermes plugins install jmdevita/hermes-advisor-call --ref 9312e7ccedb5d32f4c98c5df0127541de71b1c02 --no-enable
+```
+
+That is the commit of `v0.1.0`. For another release, look up its commit id:
+
+```bash
+git ls-remote https://github.com/jmdevita/hermes-advisor-call refs/tags/<tag>
 ```
 
 ```bash
@@ -71,7 +78,7 @@ page. `/second-opinion status` prints the resolved cycle (for example
 To upgrade:
 
 ```bash
-hermes plugins install jmdevita/hermes-advisor-call --force --ref <new-tag-or-commit>
+hermes plugins install jmdevita/hermes-advisor-call --force --ref <full-commit-id>
 ```
 
 ## Configuration
