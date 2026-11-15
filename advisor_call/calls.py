@@ -47,9 +47,9 @@ END_REASON_TEXT: dict[str, str] = {
     "day_cap": "today's advisor allowance is used up",
     "month_cap": "this cycle's advisor budget is used up",
     "turn_limit": "message limit reached",
-    "idle": "ended after being idle",
-    "session_end": "session ended",
-    "error": "ended after an error",
+    "idle": "idle too long",
+    "session_end": "the session ended",
+    "error": "an error",
 }
 
 

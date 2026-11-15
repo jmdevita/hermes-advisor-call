@@ -123,3 +123,14 @@ def test_exception_becomes_advisor_error_with_hint():
     with pytest.raises(AdvisorError) as err:
         ask(llm, LINE, SETTINGS, build_request(conv(1), "5m"))
     assert "RuntimeError" in err.value.message and "Console" in err.value.message
+
+
+def test_org_scoped_key_error_gets_a_hint():
+    msg = (
+        "400 invalid_request_error: This API key is not scoped to a workspace, so this "
+        "request must include the anthropic-workspace-id header"
+    )
+    llm = FakeLlm().script(RuntimeError(msg))
+    with pytest.raises(AdvisorError) as err:
+        ask(llm, LINE, SETTINGS, build_request(conv(1), "5m"))
+    assert "Scope set to a workspace" in err.value.message

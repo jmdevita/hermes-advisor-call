@@ -486,6 +486,29 @@ advisor-call`, `hermes plugins validate <path>` and `hermes plugins doctor
 - **Source files must not contain invisible characters.** Hermes' security
   scan flags them; the reason sanitiser builds its pattern from code points.
 
+## 7. Live checks (Phase 4, in progress)
+
+On the maintainer's Hermes VM (Telegram gateway, local Qwen executor),
+installed from `c6fc519`.
+
+| ID | Result | Notes |
+|---|---|---|
+| L-1 | Pass | Enabled, pinned to `c6fc5195`, no load error, no private-import warning; `capabilities` declares none (none needed) |
+| L-2 | Pass | `/second_opinion status`: $5.26 allowance ($100 / 19 days), $0.79 per-call cap, cycle Nov 3 to Dec 2, matching the Console's next credit date (Dec 3) |
+| L-3 | Pass | The executor found `advisor_call_open` through `tool_search` and called it through `tool_call` (O-10 confirmed live). Hermes showed the approval prompt with the plugin's text under "Why it was flagged" |
+| L-4 | Pass | Deny: nothing sent, the executor reported the refusal and did not retry |
+| L-5 | Blocked, then fixed on the key | First attempt: Anthropic returned 400 "This API key is not scoped to a workspace", because the key was created with Organization scope. The plugin handled it as designed: $0.00 billed, the call ended with reason `error`, the bill footer shown, no invented advice. A workspace-scoped key is required; the error now carries that hint and the README lists it |
+
+Findings so far:
+
+- **Use a workspace-scoped API key.** An organization-scoped key needs an
+  `anthropic-workspace-id` header that Hermes does not send, and it also
+  has Admin API rights, which do not belong on the Hermes host.
+- **Hermes' approval timeout is configurable** (`approvals.timeout`); the
+  VM uses 60 seconds. An unanswered prompt does not run.
+- The footer read "ended (ended after an error)"; end-reason texts no
+  longer start with "ended".
+
 ---
 
 ## Appendix A: test ids

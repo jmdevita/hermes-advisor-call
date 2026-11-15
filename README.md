@@ -271,6 +271,7 @@ have been processed and billed anyway.
 | No approval prompt appears | YOLO mode or `approvals.mode: off` (see Limits). With `off`, use `/second-opinion allow` |
 | "Set ... cycle_start_day ..." | Add `budget.cycle_start_day` |
 | "advisor unavailable: ..." | `ANTHROPIC_API_KEY` in `~/.hermes/.env`, the credit balance in the Claude Console, the model name in `auxiliary.advisor_call_<line>` |
+| "... not scoped to a workspace ... anthropic-workspace-id header" | The API key was created with Organization scope. Create one with Scope set to a workspace and use that instead (an organization key also has Admin API rights, so delete it from the machine) |
 | "advisor line ... is misconfigured" | Missing prices, or an `extra_body` without `max_tokens` in the line's auxiliary block |
 | The executor never calls | Hermes puts plugin tools behind tool search by default. The executor is told how to find them; if it still fails, set `tools.tool_search.enabled: off` (global) |
 | `/second-opinion allow` says "Send a message first" | A new chat has no session until its first message |

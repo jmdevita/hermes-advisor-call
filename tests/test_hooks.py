@@ -301,3 +301,9 @@ def test_session_finalize_ends_call(hooks, tools, fake_llm, runtime):
     assert call.end_reason == "session_end" and runtime.manager.grant_for(SID) is None
     hooks.on_session_finalize()  # all kwargs optional
     hooks.on_session_finalize(old_session_id="unknown", new_session_id="n")
+
+
+def test_footer_wording_has_no_doubled_ended(hooks, runtime):
+    from advisor_call.calls import END_REASON_TEXT
+
+    assert not [t for t in END_REASON_TEXT.values() if t.startswith("ended")]

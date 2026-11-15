@@ -174,7 +174,12 @@ def _describe(exc: BaseException) -> str:
     message = str(exc).strip() or "no details"
     hint = ""
     low = message.lower()
-    if any(s in low for s in ("credit balance", "billing", "insufficient", "402")):
+    if "workspace" in low and ("scoped" in low or "anthropic-workspace-id" in low):
+        hint = (
+            " The API key is organization-scoped: create a key with Scope set to a"
+            " workspace in the Claude Console and put that in ANTHROPIC_API_KEY."
+        )
+    elif any(s in low for s in ("credit balance", "billing", "insufficient", "402")):
         hint = " Check the credit balance in the Claude Console."
     elif any(s in low for s in ("401", "authentication", "api key", "x-api-key")):
         hint = " Check ANTHROPIC_API_KEY in ~/.hermes/.env."
