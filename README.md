@@ -5,12 +5,13 @@ lets a cheap or local main model **get a second opinion from a stronger
 advisor model**, as a multi-message consult with human approval per call and
 hard bill caps.
 
-> **Status: pre-release, live testing in progress.** Built and tested
-> against Hermes v0.23.1 (unit tests, Hermes' own plugin checks, and an
-> end-to-end run through a real Hermes against a local fake Anthropic
-> server). The core flow (approval, deny, a multi-message call through
-> Telegram, the bill) works against the real API; the remaining live checks
-> are listed in [DESIGN.md](DESIGN.md) section 7.
+> **Status: v0.1.0.** Tested against Hermes v0.23.1: unit tests, Hermes'
+> own plugin checks, an end-to-end run through a real Hermes against a local
+> fake Anthropic server, and live checks on a real Hermes with the real API
+> through Telegram (approval and deny, session approvals, pre-authorization,
+> multi-message calls, the bill caps, the reply limit). Two follow-ups compare
+> the plugin's bill with the Claude Console's; see [DESIGN.md](DESIGN.md)
+> section 7.
 
 ## How it works
 
@@ -41,10 +42,10 @@ is unaffected.
 ## Install
 
 Plugins are per profile: install it only in the profile that should be
-able to spend money. Pin `--ref` to a commit.
+able to spend money. Pin `--ref` to a release tag (or a commit).
 
 ```bash
-hermes plugins install jmdevita/hermes-advisor-call --ref <commit-sha> --no-enable
+hermes plugins install jmdevita/hermes-advisor-call --ref v0.1.0 --no-enable
 ```
 
 ```bash
@@ -70,7 +71,7 @@ page. `/second-opinion status` prints the resolved cycle (for example
 To upgrade:
 
 ```bash
-hermes plugins install jmdevita/hermes-advisor-call --force --ref <new-commit-sha>
+hermes plugins install jmdevita/hermes-advisor-call --force --ref <new-tag-or-commit>
 ```
 
 ## Configuration
