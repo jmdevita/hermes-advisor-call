@@ -197,3 +197,9 @@ def test_user_extra_body_without_max_tokens_refuses_line():
     assert (
         parse_settings({**VALID, "advisor": {"max_tokens": 900}}).line("sonnet").max_tokens == 900
     )
+
+
+def test_low_max_tokens_warns():
+    s = parse_settings({**VALID, "advisor": {"max_tokens": 300}})
+    assert s.max_tokens == 300 and any("replies may come back empty" in w for w in s.warnings)
+    assert not parse_settings({**VALID, "advisor": {"max_tokens": 1024}}).warnings

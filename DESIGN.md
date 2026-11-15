@@ -526,7 +526,7 @@ installed from `c6fc519`.
 | L-9 | Pass | With `per_call_usd: 0.01` (scaled to about $0.016 by dynamic pacing) the call ended with "bill cap reached" before anything was sent. $0.01 rather than $0.03: at $0.03 the scaled cap (~$0.05) sits right at the cost of one opening message, so the outcome is not deterministic |
 | L-10 | Pass | `/second_opinion allow`, then a call ran with no prompt |
 | L-11 | Pass | `/second_opinion ask` answered directly; `/second_opinion hangup` during an executor call ended it and the executor stopped |
-| L-13 | Pending | Reply limit against the real API |
+| L-13 | Pass | With `advisor.max_tokens: 300`, Sonnet 5.5 spent the whole limit thinking and returned no text, twice: the limit reaches the API (without it the long answer would have come back). The plugin reported "empty reply", billed ~$0.01 each, closed the call; the executor answered on its own without pretending to be the advisor. Console check of output tokens pending |
 
 Findings so far:
 
@@ -545,6 +545,8 @@ Findings so far:
 - **`/second-opinion ask` returns only the answer** (maintainer's request);
   the call's cost shows in `status` and `bill`.
 - "1 messages" is now "1 message" in `status`.
+- **A low `advisor.max_tokens` starves the answer**: thinking counts
+  against the limit. The plugin now warns below 1,024.
 
 ---
 

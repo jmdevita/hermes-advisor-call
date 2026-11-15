@@ -68,6 +68,9 @@ DEFAULTS: dict[str, Any] = {
     "log_transcripts": False,
 }
 
+# Below this, thinking can use the whole reply limit (seen live, DESIGN.md 7).
+MIN_USEFUL_MAX_TOKENS = 1024
+
 PRICE_KEYS = ("input", "output", "cache_read")  # cache_write: optional, derived
 CACHE_TTLS = ("5m", "1h", "off")
 PACINGS = ("dynamic", "fixed")
@@ -437,6 +440,12 @@ def parse_settings(raw: Any, auxiliary: Any = None, approvals: Any = None) -> Se
         senders = ()
 
     max_tokens = _integer(adv.get("max_tokens"), ad["max_tokens"], "advisor.max_tokens", w)
+    if max_tokens < MIN_USEFUL_MAX_TOKENS:
+        w.warn(
+            f"advisor.max_tokens is {max_tokens}: current Claude models think before "
+            "answering and the thinking counts against this limit, so replies may come "
+            f"back empty. Use at least {MIN_USEFUL_MAX_TOKENS}."
+        )
     lines = {n: _apply_auxiliary(line, auxiliary, max_tokens, w) for n, line in lines.items()}
 
     settings = Settings(
