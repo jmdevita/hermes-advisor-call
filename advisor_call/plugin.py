@@ -68,7 +68,7 @@ def register(
         ctx.register_auxiliary_task(
             line.task_key,
             display_name=f"Advisor call: {line.name}",
-            description=f"Advisor model for advisor-call line {line.name!r}",
+            description=f"advisor-call advisor model ({line.name}: {line.model})",
             defaults={
                 "provider": line.provider or "auto",
                 "model": line.model,

@@ -135,9 +135,9 @@ def test_cycle_day_unset_refuses(tools, fake_llm, config):
     assert "cycle_start_day" in out["error"] and fake_llm.calls == []
 
 
-def test_misconfigured_line(tools, fake_llm):
-    out = open_(tools, line="opus")
-    assert "misconfigured" in out["error"] and "sonnet" in out["error"]
+def test_model_not_allowed(tools, fake_llm):
+    out = open_(tools, model="opus")
+    assert "not available" in out["error"] and "Allowed: sonnet" in out["error"]
     assert fake_llm.calls == []
 
 

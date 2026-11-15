@@ -28,7 +28,7 @@ CHAT_LIMIT = 3500  # stay well under Telegram's 4096-character message limit
 
 USAGE = f"""\
 /{COMMAND} or /{COMMAND} status   line, open call, today's and this cycle's spend
-/{COMMAND} allow [line] [$cap]    pre-authorize advisor calls for this session
+/{COMMAND} allow [model] [$cap]   pre-authorize advisor calls for this session
 /{COMMAND} revoke                 remove the pre-authorization
 /{COMMAND} ask <question>         ask the advisor yourself (one message, counts toward the budget)
 /{COMMAND} hangup                 end the open call now
@@ -144,10 +144,13 @@ class SecondOpinionCommand:
         line = settings.line(None)
         out = []
         if line is not None:
-            ok = "" if line.usable else f" (misconfigured: {line.problem})"
-            out.append(f"Advisor line: {line.name} ({line.model}){ok}")
+            ok = "" if line.usable else f" (cannot be used: {line.problem})"
+            out.append(f"Advisor: {line.name} ({line.model}){ok}")
         else:
-            out.append(f"Advisor line: {settings.default_line!r} is not configured")
+            out.append(f"Advisor: {settings.default_line!r} is not configured")
+        others = [n for n in settings.lines if n != settings.default_line]
+        if others:
+            out.append(f"Also allowed: {', '.join(others)}")
         out += self._budget_lines(settings)
         if not settings.budget.cycle_error:
             try:
@@ -162,7 +165,7 @@ class SecondOpinionCommand:
             grant = self.rt.manager.grant_for(session_id)
             if grant is not None:
                 cap_text = f", cap {money(grant.cap_usd)}" if grant.cap_usd is not None else ""
-                out.append(f"This session is pre-authorized (line {grant.line}{cap_text}).")
+                out.append(f"This session is pre-authorized ({grant.line}{cap_text}).")
             else:
                 out.append("This session is not pre-authorized; each call asks for approval.")
         return "\n".join(out)
@@ -176,13 +179,13 @@ class SecondOpinionCommand:
             elif not line_name:
                 line_name = word
             else:
-                return f"Usage: /{COMMAND} allow [line] [$cap]"
+                return f"Usage: /{COMMAND} allow [model] [$cap]"
         line = settings.line(line_name or None)
         if line is None or not line.usable:
             valid = ", ".join(settings.usable_lines()) or "none"
             return (
-                f"Advisor line {(line_name or settings.default_line)!r} is not usable. "
-                f"Valid lines: {valid}."
+                f"Advisor model {(line_name or settings.default_line)!r} is not available. "
+                f"Allowed: {valid}."
             )
         if settings.budget.cycle_error:
             return settings.budget.cycle_error
@@ -201,7 +204,7 @@ class SecondOpinionCommand:
             else f"{money(call_cap(settings.budget, state))} (computed per call)"
         )
         return (
-            f"Advisor calls are pre-authorized for this session (line {line.name}, cap "
+            f"Advisor calls are pre-authorized for this session ({line.name}, cap "
             f"{shown}). The executor is told on its next turn. /{COMMAND} revoke to undo."
         )
 

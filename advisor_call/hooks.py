@@ -137,13 +137,15 @@ class Hooks:
         except CallError:
             pass
         # 4. Line and cycle configuration.
-        line_name = args.get("line") if isinstance(args.get("line"), str) else ""
+        requested = args.get("model") or args.get("line")
+        line_name = requested if isinstance(requested, str) else ""
         line = settings.line(line_name.strip() or None)
         if line is None or not line.usable:
             valid = ", ".join(settings.usable_lines()) or "none"
+            detail = f" ({line.problem})" if line is not None and line.problem else ""
             return _block(
-                f"Advisor line {(line_name or settings.default_line)!r} is "
-                f"misconfigured. Valid lines: {valid}."
+                f"Advisor model {(line_name or settings.default_line)!r} is not "
+                f"available{detail}. Allowed: {valid}."
             )
         if settings.budget.cycle_error:
             return _block(settings.budget.cycle_error)
@@ -230,7 +232,7 @@ class Hooks:
             cap_text = f", cap {money(cap)}" if cap is not None else ""
             return {
                 "context": "[advisor-call] The user has pre-authorized advisor calls for "
-                f"this session (line: {grant.line}{cap_text})."
+                f"this session (model: {grant.line}{cap_text})."
             }
         except Exception:  # noqa: BLE001 - capture must never break a turn
             log.exception("advisor-call: pre_llm_call failed")

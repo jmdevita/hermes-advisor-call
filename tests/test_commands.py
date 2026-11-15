@@ -22,7 +22,7 @@ def run(cmd, args="", session_id=SID, source=None):
 
 def test_status(cmd):
     out = run(cmd)
-    assert "Advisor line: sonnet (claude-sonnet-5-5)" in out
+    assert "Advisor: sonnet (claude-sonnet-5-5)" in out
     assert "Today: $0.00 of $" in out and "budget left $100.00 / 19 days" in out
     assert "Cycle: Nov 3 to Dec 2 (19 days left)" in out
     assert "Per-call cap today: $0.79" in out
@@ -44,13 +44,13 @@ def test_allow_with_custom_cap_clamped(cmd, runtime, config):
     out = run(cmd, "allow $5")
     assert "pre-authorized" in out and "cap $0.30" in out  # clamped to today's remainder
     assert runtime.manager.grant_for(SID).cap_usd == pytest.approx(0.30)
-    assert "This session is pre-authorized (line sonnet, cap $0.30)" in run(cmd)
+    assert "This session is pre-authorized (sonnet, cap $0.30)" in run(cmd)
 
 
 def test_allow_forms(cmd, runtime):
     assert "computed per call" in run(cmd, "allow")
     assert "cap $0.25" in run(cmd, "allow sonnet 0.25")
-    assert "not usable" in run(cmd, "allow opus")
+    assert "not available" in run(cmd, "allow opus")
     assert "more than $0" in run(cmd, "allow $0")
     assert "Usage" in run(cmd, "allow a b")
 
@@ -144,14 +144,14 @@ def test_sender_check_on_spending_subcommands(cmd, config, fake_llm):
     assert "not allowed" in run(cmd, "allow", source=stranger)
     assert "not allowed" in run(cmd, "ask hi", source=stranger)
     assert "not allowed" in run(cmd, "allow", source=SimpleNamespace(user_id=None))
-    assert "Advisor line" in run(cmd, "status", source=stranger)  # read-only is fine
+    assert "Advisor:" in run(cmd, "status", source=stranger)  # read-only is fine
     assert "pre-authorized" in run(cmd, "allow", source=SimpleNamespace(user_id=111))
     assert fake_llm.calls == []
 
 
 def test_no_session_and_unknown(cmd):
     assert "Send a message first" in run(cmd, "allow", session_id="")
-    assert "Advisor line" in run(cmd, "status", session_id=None)
+    assert "Advisor:" in run(cmd, "status", session_id=None)
     assert run(cmd, "dance") == USAGE
 
 

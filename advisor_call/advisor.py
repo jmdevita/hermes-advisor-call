@@ -184,5 +184,5 @@ def _describe(exc: BaseException) -> str:
     elif any(s in low for s in ("401", "authentication", "api key", "x-api-key")):
         hint = " Check ANTHROPIC_API_KEY in ~/.hermes/.env."
     elif "not_found" in low or "404" in low or ("model" in low and "not" in low):
-        hint = " Check the model name in auxiliary.advisor_call_<line>."
+        hint = " Check advisor.model, and auxiliary.advisor_call_<name> if you set one."
     return f"{type(exc).__name__}: {message[:500]}{hint}"

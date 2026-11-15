@@ -23,7 +23,7 @@ hard bill caps.
    the session plus what the executor sends; it can ask for files, logs or
    errors, and the executor fetches them with its own tools.
 4. The call ends when the executor hangs up, you hang up, a cap or the
-   message limit is reached, or the line is idle for 30 minutes.
+   message limit is reached, or the call is idle for 30 minutes.
 5. Your next reply ends with the bill, for example
    `📞 Advisor call (sonnet): 4 messages · ~$0.12 of $0.50 (estimate) · ended (hung up) · today $0.41 of $3.33`.
 
@@ -76,22 +76,15 @@ hermes plugins install jmdevita/hermes-advisor-call --force --ref <new-commit-sh
 ## Configuration
 
 All settings live under `plugins.entries.advisor-call` and are read on every
-call, so budget edits apply without a restart. Adding or changing a line, or
-changing `advisor.max_tokens`, needs a restart. Invalid values fall back to
+call, so budget edits apply without a restart. Changing the advisor model
+(`advisor.model`, `advisor.also_allow`) or `advisor.max_tokens` needs a
+restart. Invalid values fall back to
 the default with a warning in the Hermes log.
 
 ```yaml
 plugins:
   entries:
     advisor-call:
-      default_line: sonnet
-      lines:
-        sonnet:
-          prices_per_mtok:          # USD per million tokens, used for the bill
-            input: 2.00
-            output: 10.00
-            cache_read: 0.10
-            cache_write: 2.50       # 5-minute write; use 4.00 with cache_ttl: 1h
       budget:
         per_month_usd: 100.00       # budget per billing cycle
         cycle_start_day: 3          # REQUIRED, 1-31, no default
@@ -109,6 +102,9 @@ plugins:
         tool_output_chars: 2000
         redact_secrets: true
       advisor:
+        model: sonnet               # sonnet (default) or opus, or a full model id
+        also_allow: []              # other models the executor may ask for, e.g. [opus]
+        prices_per_mtok: {}         # only for models without shipped prices (see below)
         max_tokens: 4000            # reply limit per message
         timeout_seconds: 180
         cache_ttl: 5m               # 5m | 1h | off
@@ -135,34 +131,56 @@ against Anthropic's pricing page.
   shown on the approval prompt.
 - **The cycle budget is a hard limit** in both pacing modes.
 
-### Advisor lines
+### Choosing the advisor model
 
-Each line gets its own model slot, `auxiliary.advisor_call_<line>`, shown in
-Hermes' model picker. The shipped `sonnet` line uses provider `anthropic`
-and model `claude-sonnet-5-5`. To add an Opus line, add it with its prices
-and restart:
+The advisor is Claude Sonnet 5.5 unless you choose otherwise. Switching is
+one line, then a restart:
 
 ```yaml
-plugins:
-  entries:
-    advisor-call:
-      lines:
-        sonnet: {}
-        opus:
-          prices_per_mtok: {input: 4.00, output: 20.00, cache_read: 0.20, cache_write: 5.00}
-auxiliary:
-  advisor_call_opus:
-    provider: anthropic
-    model: claude-opus-5-5
+      advisor:
+        model: opus                 # Claude Opus 5.5
 ```
 
-A line with missing or invalid prices is refused, never called.
+The plugin ships prices for these, in USD per million tokens:
 
-**If you set your own `extra_body` in an `auxiliary.advisor_call_<line>`
-block, include `max_tokens` in it.** Hermes replaces the plugin's
-`extra_body` with yours instead of merging them, and the plugin uses
-`extra_body.max_tokens` to limit reply length. A line whose `extra_body`
-has no `max_tokens` is refused with a message saying so.
+| Name | Model | Input | Output | Cache read |
+|---|---|---|---|---|
+| `sonnet` | `claude-sonnet-5-5` | 2.00 | 10.00 | 0.10 |
+| `opus` | `claude-opus-5-5` | 4.00 | 20.00 | 0.20 |
+
+The cache-write price is derived: 1.25 times input with `cache_ttl: 5m`,
+2 times with `1h`. Opus costs about twice as much per message, so a call
+reaches its dollar cap sooner; raise `budget.per_call_usd` if calls end
+early.
+
+Only the chosen model can be called. To let the executor ask for another
+one on a call (each call still needs approval, and a session approval or
+`/second-opinion allow` covers one model at a time):
+
+```yaml
+      advisor:
+        model: sonnet
+        also_allow: [opus]
+```
+
+Any other Claude model id works if you give its prices; a model without
+prices is refused, never called. You can also override a shipped price this
+way, for example if Anthropic changes prices before a plugin update:
+
+```yaml
+      advisor:
+        model: claude-opus-4-8
+        prices_per_mtok:
+          claude-opus-4-8: {input: 5.00, output: 25.00, cache_read: 0.50}
+```
+
+Each allowed model gets a slot in Hermes' model picker,
+`auxiliary.advisor_call_<name>` (`advisor_call_sonnet`, `advisor_call_opus`,
+or the model id with `-` as `_`). You do not need to set it. **If you add your
+own `extra_body` to that slot, include `max_tokens` in it:** Hermes replaces
+the plugin's `extra_body` with yours instead of merging them, and the plugin
+uses `extra_body.max_tokens` to limit reply length. A model whose slot has an
+`extra_body` without `max_tokens` is refused with a message saying so.
 
 ## Approval
 
@@ -178,7 +196,7 @@ dangerous shell commands:
   told not to retry.
 
 To skip the prompt for a session, type `/second-opinion allow` (optionally
-with a line and a cap). It covers one line: the default line, or the one you
+with a model and a cap). It covers one model: the default, or the one you
 name. Calls with no human present (cron, unattended
 platforms) are blocked by Hermes unless you configured those to
 auto-approve.
@@ -187,8 +205,8 @@ auto-approve.
 
 | Command | What it does |
 |---|---|
-| `/second-opinion` or `/second-opinion status` | Line and model, the open call, today's spend against today's allowance, this cycle's spend, the cycle window, whether this session is pre-authorized |
-| `/second-opinion allow [line] [$cap]` | Pre-authorize calls on one line (default: the default line) for this session, optionally with a per-call cap (limited to what is left today). The executor is told on its next turn |
+| `/second-opinion` or `/second-opinion status` | The advisor model (and any also allowed), the open call, today's spend against today's allowance, this cycle's spend, the cycle window, whether this session is pre-authorized |
+| `/second-opinion allow [model] [$cap]` | Pre-authorize calls to one model (default: the default model) for this session, optionally with a per-call cap (limited to what is left today). The executor is told on its next turn |
 | `/second-opinion revoke` | Remove the pre-authorization |
 | `/second-opinion ask <question>` | Ask the advisor yourself: one message with the session transcript. No approval prompt, since you typed it; counts toward the budget |
 | `/second-opinion hangup` | End the open call now; the executor is told on its next message |
@@ -222,7 +240,7 @@ have been processed and billed anyway.
 
 - **What leaves the machine:** the tail of the session transcript (once, in
   the first message) and what the executor writes, sent to the advisor
-  line's provider. Nothing else is sent anywhere: no telemetry, no
+  advisor's provider (Anthropic). Nothing else is sent anywhere: no telemetry, no
   third-party service.
 - **Secrets** are redacted with Hermes' own redactor before sending, even if
   you turned Hermes' redaction off. API keys and credentials in URLs are
@@ -272,9 +290,9 @@ have been processed and billed anyway.
 |---|---|
 | No approval prompt appears | YOLO mode or `approvals.mode: off` (see Limits). With `off`, use `/second-opinion allow` |
 | "Set ... cycle_start_day ..." | Add `budget.cycle_start_day` |
-| "advisor unavailable: ..." | `ANTHROPIC_API_KEY` in `~/.hermes/.env`, the credit balance in the Claude Console, the model name in `auxiliary.advisor_call_<line>` |
+| "advisor unavailable: ..." | `ANTHROPIC_API_KEY` in `~/.hermes/.env`, the credit balance in the Claude Console, `advisor.model` |
 | "... not scoped to a workspace ... anthropic-workspace-id header" | The API key was created with Organization scope. Create one with Scope set to a workspace and use that instead (an organization key also has Admin API rights, so delete it from the machine) |
-| "advisor line ... is misconfigured" | Missing prices, or an `extra_body` without `max_tokens` in the line's auxiliary block |
+| "advisor model ... is not available" or "cannot be used" | The model is not `advisor.model` or in `also_allow`; or it has no prices (add them under `advisor.prices_per_mtok`); or its auxiliary slot has an `extra_body` without `max_tokens` |
 | The executor never calls | Hermes puts plugin tools behind tool search by default. The executor is told how to find them; if it still fails, set `tools.tool_search.enabled: off` (global) |
 | `/second-opinion allow` says "Send a message first" | A new chat has no session until its first message |
 | The bill is higher than the Console | Expected while caching is on: the estimate is on the safe side |

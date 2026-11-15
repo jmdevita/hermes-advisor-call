@@ -401,6 +401,28 @@ There is no path install. For local smoke tests, symlink the repo into
 advisor-call`, `hermes plugins validate <path>` and `hermes plugins doctor
 <path>`. Tests point `HERMES_HOME` at a temporary directory.
 
+### 2.7 Choosing the advisor model (decided 2026-11-15)
+
+The original design configured advisor "lines" (`lines:` with prices per
+line, `default_line`, and an `auxiliary.advisor_call_<line>` block for the
+model). Live use showed that switching to Opus took three edits in two
+places. Replaced, before any release, with:
+
+- `advisor.model`: an alias (`sonnet`, the default, or `opus`) or a full
+  model id. Switching is one line.
+- Shipped prices for the aliased models; the cache-write price is derived
+  from the TTL (1.25x input for `5m`, 2x for `1h`).
+- `advisor.also_allow`: other models the executor may name on a call.
+  Empty by default, so the executor cannot pick a more expensive model on
+  its own.
+- `advisor.prices_per_mtok`: prices for other models, or overrides of the
+  shipped ones, keyed by model id or alias. An unpriced model is refused.
+
+Internally each allowed model is still a "line" (short name used in
+approval rule keys, grants, the ledger and the auxiliary slot name), so
+nothing else changed. The old `lines` and `default_line` keys are ignored
+with a warning. The tool's argument is now `model` (`line` still accepted).
+
 ---
 
 ## 3. Implementation notes (Phase 1)

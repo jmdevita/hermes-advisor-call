@@ -16,6 +16,8 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 PORT = int(sys.argv[1])
+ALIAS = sys.argv[2] if len(sys.argv) > 2 else "sonnet"
+MODEL_ID = {"sonnet": "claude-sonnet-5-5", "opus": "claude-opus-5-5"}[ALIAS]
 SEEN: list[dict] = []
 REPLIES = iter(["First advice: check the lockfile.", "Second advice: pin the version."])
 
@@ -118,7 +120,7 @@ def main() -> int:
     check(
         "approval directive",
         d.action == "approve"
-        and d.rule_key == f"advisor_call:sonnet:{sid}"
+        and d.rule_key == f"advisor_call:{ALIAS}:{sid}"
         and 'Reason given by the model: "stuck on the build"' in (d.message or ""),
         d.message or "",
     )
@@ -134,7 +136,7 @@ def main() -> int:
     check("hangup", hung.get("end_reason") == "hangup" and len(SEEN) == 2, str(hung)[:200])
     if len(SEEN) == 2:
         first, second = SEEN
-        check("model on the wire", first.get("model") == "claude-sonnet-5-5", first.get("model"))
+        check("model on the wire", first.get("model") == MODEL_ID, first.get("model"))
         check(
             "max_tokens on the wire",
             first.get("max_tokens") == 4000 == second.get("max_tokens"),

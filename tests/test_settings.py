@@ -1,6 +1,8 @@
 """U-1 settings merge and validation; part of U-37."""
 
-from advisor_call.settings import CYCLE_SETUP_MESSAGE, aux_task_key, parse_settings
+import pytest
+
+from advisor_call.settings import CYCLE_SETUP_MESSAGE, Prices, aux_task_key, parse_settings
 
 VALID = {"budget": {"cycle_start_day": 3}}
 
@@ -70,31 +72,83 @@ def test_zero_allowed_for_optional_ceilings():
     assert s.warnings == ()
 
 
-def test_unpriced_line_is_unusable():
+def test_one_line_switch_to_opus():
+    s = parse_settings({**VALID, "advisor": {"model": "opus"}})
+    line = s.line(None)
+    assert (line.name, line.provider, line.model) == ("opus", "anthropic", "claude-opus-5-5")
+    assert line.prices == Prices(input=4.0, output=20.0, cache_read=0.20, cache_write=5.0)
+    assert list(s.lines) == ["opus"]  # only the chosen model may be called
+    assert s.line("sonnet") is None
+    assert s.warnings == ()
+
+
+def test_full_model_id_and_case_resolve_to_the_alias():
+    s = parse_settings({**VALID, "advisor": {"model": "Claude-Opus-5-5"}})
+    assert s.default_line == "opus" and s.line("claude-opus-5-5") is s.line("opus")
+
+
+def test_also_allow():
+    s = parse_settings({**VALID, "advisor": {"model": "opus", "also_allow": ["sonnet", "opus"]}})
+    assert list(s.lines) == ["opus", "sonnet"] and s.default_line == "opus"
+    assert s.usable_lines() == ["opus", "sonnet"]
+    one = parse_settings({**VALID, "advisor": {"also_allow": "opus"}})  # a bare string works
+    assert list(one.lines) == ["sonnet", "opus"]
+
+
+def test_cache_write_price_follows_the_ttl():
+    five = parse_settings({**VALID, "advisor": {"cache_ttl": "5m"}}).line(None).prices
+    hour = parse_settings({**VALID, "advisor": {"cache_ttl": "1h"}}).line(None).prices
+    assert five.cache_write == pytest.approx(2.50) and hour.cache_write == pytest.approx(4.00)
+
+
+def test_price_override_and_custom_model():
     s = parse_settings(
         {
             **VALID,
-            "default_line": "opus",
-            "lines": {
-                "opus": {
-                    "provider": "anthropic",
-                    "model": "claude-opus-5-5",
-                    "prices_per_mtok": {"input": 4, "output": 20},
+            "advisor": {
+                "model": "claude-opus-4-8",
+                "also_allow": ["sonnet"],
+                "prices_per_mtok": {
+                    "claude-opus-4-8": {"input": 5, "output": 25, "cache_read": 0.5},
+                    "sonnet": {"input": 3.0},  # override one shipped price, by alias
                 },
-                "sonnet": {},
             },
         }
     )
-    assert not s.line("opus").usable
-    assert "cache_read" in s.line("opus").problem
-    assert s.line("sonnet").usable  # missing fields fall back to the shipped sonnet line
-    assert s.usable_lines() == ["sonnet"]
+    custom = s.line(None)
+    assert (custom.name, custom.model) == ("claude_opus_4_8", "claude-opus-4-8")
+    assert custom.usable and custom.prices.cache_write == pytest.approx(6.25)
+    assert custom.task_key == "advisor_call_claude_opus_4_8"  # a valid Hermes task key
+    assert s.line("sonnet").prices.input == 3.0 and s.line("sonnet").prices.output == 10.0
 
 
-def test_unknown_default_line_warns():
-    s = parse_settings({**VALID, "default_line": "gpt"})
-    assert s.line(None) is None
-    assert any("default_line" in w for w in s.warnings)
+def test_unpriced_model_is_refused_with_a_clear_message():
+    s = parse_settings({**VALID, "advisor": {"model": "claude-mystery-9"}})
+    line = s.line(None)
+    assert not line.usable and line.prices is None
+    assert "advisor.prices_per_mtok.claude-mystery-9" in line.problem
+    assert s.usable_lines() == []
+    bad = parse_settings(
+        {
+            **VALID,
+            "advisor": {
+                "model": "x",
+                "prices_per_mtok": {"x": {"input": 1, "output": 0, "cache_read": 0}},
+            },
+        }
+    )
+    assert "'output'" in bad.line(None).problem
+
+
+def test_old_line_settings_warn():
+    s = parse_settings({**VALID, "lines": {"opus": {}}, "default_line": "opus"})
+    assert s.default_line == "sonnet"  # ignored
+    assert sum("no longer used" in w for w in s.warnings) == 2
+
+
+def test_invalid_model_value_falls_back():
+    s = parse_settings({**VALID, "advisor": {"model": 5}})
+    assert s.default_line == "sonnet" and any("advisor.model" in w for w in s.warnings)
 
 
 def test_cycle_start_day_required():

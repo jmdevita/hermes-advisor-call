@@ -99,14 +99,7 @@ def test_grant_skips_prompt_and_revoke_restores_it(hooks, runtime):
 
 
 def test_grant_for_other_line_does_not_apply(hooks, runtime, config):
-    config["lines"] = {
-        "sonnet": {},
-        "opus": {
-            "provider": "anthropic",
-            "model": "claude-opus-5-5",
-            "prices_per_mtok": {"input": 4, "output": 20, "cache_read": 0.2, "cache_write": 5},
-        },
-    }
+    config["advisor"] = {"also_allow": ["opus"]}
     runtime.manager.grant(SID, line="sonnet", cap_usd=0.01)
     # A pre-authorization covers only the line it was given for: another
     # line still asks, with its own computed cap, not the grant's $0.01.
@@ -244,7 +237,7 @@ def test_pre_llm_call_records_and_notifies_once(hooks, runtime):
     out = hooks.pre_llm_call(session_id=SID, conversation_history=[], user_message="next")
     assert out == {
         "context": "[advisor-call] The user has pre-authorized advisor calls for "
-        "this session (line: sonnet, cap $0.40)."
+        "this session (model: sonnet, cap $0.40)."
     }
     assert hooks.pre_llm_call(session_id=SID, conversation_history=[], user_message="x") is None
 

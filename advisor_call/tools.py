@@ -59,9 +59,10 @@ OPEN_SCHEMA: dict[str, Any] = {
                 "description": "Your first message to the advisor: the problem, exact errors, "
                 "relevant code, what you tried, and your specific question.",
             },
-            "line": {
+            "model": {
                 "type": "string",
-                "description": "Advisor line to call. Omit for the default.",
+                "description": "Advisor model to call, when more than one is allowed (for "
+                "example sonnet or opus). Omit for the default.",
             },
         },
         "required": ["reason", "question"],
@@ -158,7 +159,7 @@ def _usable_line(settings: Settings, name: str) -> tuple[Line | None, str]:
         valid = ", ".join(settings.usable_lines()) or "none"
         which = name or settings.default_line
         detail = f": {line.problem}" if line is not None and line.problem else ""
-        return None, f"advisor line {which!r} is misconfigured{detail}. Valid lines: {valid}."
+        return None, f"advisor model {which!r} is not available{detail}. Allowed: {valid}."
     return line, ""
 
 
@@ -441,7 +442,7 @@ def open_call(
         return _error(
             "`question` is required: the problem, exact errors, code and what you already tried"
         )
-    line, problem = _usable_line(settings, _str_arg(args, "line"))
+    line, problem = _usable_line(settings, _str_arg(args, "model") or _str_arg(args, "line"))
     if line is None:
         return _error(problem)
     if settings.budget.cycle_error:

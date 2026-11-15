@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import logging
 import math
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -23,25 +24,20 @@ CYCLE_SETUP_MESSAGE = (
     "your API credit refreshes."
 )
 
-# Shipped so a fresh install works with only an API key. Prices are USD per
-# million tokens for Claude Sonnet 5.5 (see DESIGN.md, O-11). cache_write is
-# the 5-minute write price; use 4.00 with cache_ttl: 1h.
-DEFAULT_LINES: dict[str, dict[str, Any]] = {
-    "sonnet": {
-        "provider": "anthropic",
-        "model": "claude-sonnet-5-5",
-        "prices_per_mtok": {
-            "input": 2.00,
-            "output": 10.00,
-            "cache_read": 0.10,
-            "cache_write": 2.50,
-        },
-    }
+# Models with shipped prices, USD per million tokens (DESIGN.md, O-11;
+# Anthropic's published prices, 2026-11). The cache-write price is derived
+# from the cache TTL (CACHE_WRITE_MULTIPLIER). Users can override any price,
+# or price another model, under advisor.prices_per_mtok.
+KNOWN_MODELS: dict[str, dict[str, float]] = {
+    "claude-sonnet-5-5": {"input": 2.00, "output": 10.00, "cache_read": 0.10},
+    "claude-opus-5-5": {"input": 4.00, "output": 20.00, "cache_read": 0.20},
 }
+MODEL_ALIASES: dict[str, str] = {"sonnet": "claude-sonnet-5-5", "opus": "claude-opus-5-5"}
+DEFAULT_MODEL = "sonnet"
+CACHE_WRITE_MULTIPLIER = {"5m": 1.25, "1h": 2.0, "off": 1.25}
+PROVIDER = "anthropic"
 
 DEFAULTS: dict[str, Any] = {
-    "default_line": "sonnet",
-    "lines": DEFAULT_LINES,
     "budget": {
         "per_month_usd": 100.00,
         "cycle_start_day": None,  # required; no default on purpose
@@ -59,13 +55,20 @@ DEFAULTS: dict[str, Any] = {
         "tool_output_chars": 2000,
         "redact_secrets": True,
     },
-    "advisor": {"max_tokens": 4000, "timeout_seconds": 180, "cache_ttl": "5m"},
+    "advisor": {
+        "model": DEFAULT_MODEL,
+        "also_allow": [],
+        "prices_per_mtok": {},
+        "max_tokens": 4000,
+        "timeout_seconds": 180,
+        "cache_ttl": "5m",
+    },
     "allowed_senders": [],
     "bill_footer": True,
     "log_transcripts": False,
 }
 
-PRICE_KEYS = ("input", "output", "cache_read", "cache_write")
+PRICE_KEYS = ("input", "output", "cache_read")  # cache_write: optional, derived
 CACHE_TTLS = ("5m", "1h", "off")
 PACINGS = ("dynamic", "fixed")
 
@@ -82,6 +85,11 @@ class Prices:
 
 @dataclass(frozen=True)
 class Line:
+    """One callable advisor model. ``name`` is the short name used in
+    approvals, grants, the ledger and Hermes' auxiliary slot
+    (``auxiliary.advisor_call_<name>``): the alias for a shipped model
+    (``sonnet``), else the model id with non-alphanumerics as ``_``."""
+
     name: str
     provider: str
     model: str
@@ -134,8 +142,11 @@ class Settings:
     warnings: tuple[str, ...] = field(default=())
 
     def line(self, name: str | None) -> Line | None:
-        """The named line, or the default line when name is empty."""
-        return self.lines.get(name or self.default_line)
+        """The advisor for a name, alias or full model id; the default
+        advisor when name is empty. None when that model is not allowed."""
+        if not name:
+            return self.lines.get(self.default_line)
+        return self.lines.get(name) or self.lines.get(resolve_model(name)[0])
 
     def usable_lines(self) -> list[str]:
         return sorted(n for n, line in self.lines.items() if line.usable)
@@ -220,34 +231,57 @@ def _cache_ttl(raw: Any, w: _Collector) -> str:
     return DEFAULTS["advisor"]["cache_ttl"]
 
 
-def _line(name: str, raw: Any, w: _Collector) -> Line:
-    base = DEFAULT_LINES.get(name, {})
-    if not isinstance(raw, dict):
-        if raw is not None:
-            w.warn(f"lines.{name} must be a mapping")
-        raw = {}
-    provider = raw.get("provider") or base.get("provider") or ""
-    model = raw.get("model") or base.get("model") or ""
-    price_raw = raw.get("prices_per_mtok", base.get("prices_per_mtok"))
+def resolve_model(ref: str) -> tuple[str, str]:
+    """(short name, model id) for an alias or a model id."""
+    low = ref.strip().lower()
+    if low in MODEL_ALIASES:
+        return low, MODEL_ALIASES[low]
+    for alias, model_id in MODEL_ALIASES.items():
+        if low == model_id:
+            return alias, model_id
+    return re.sub(r"[^a-z0-9_]", "_", low), ref.strip()
+
+
+def _price_value(v: Any, key: str) -> float | None:
+    if not (isinstance(v, int | float) and not isinstance(v, bool) and math.isfinite(v)):
+        return None
+    if v < 0 or (key in ("input", "output") and v == 0):  # cache prices may be 0
+        return None
+    return float(v)
+
+
+def _model_line(ref: str, overrides: dict[str, Any], cache_ttl: str, w: _Collector) -> Line:
+    name, model_id = resolve_model(ref)
+    given = overrides.get(model_id, overrides.get(name, overrides.get(ref)))
+    if given is not None and not isinstance(given, dict):
+        w.warn(f"advisor.prices_per_mtok.{model_id} must be a mapping; ignoring it")
+        given = None
+    raw = {**KNOWN_MODELS.get(model_id, {}), **(given or {})}
     problem = ""
-    prices = None
-    if not isinstance(price_raw, dict):
-        problem = "no prices_per_mtok configured"
+    values: dict[str, float] = {}
+    if not raw:
+        problem = (
+            f"no prices for model {model_id!r}; add them under "
+            f"advisor.prices_per_mtok.{model_id} (input, output, cache_read)"
+        )
     else:
-        values: dict[str, float] = {}
         for key in PRICE_KEYS:
-            v = price_raw.get(key)
-            valid = isinstance(v, int | float) and not isinstance(v, bool) and math.isfinite(v)
-            # Input and output must be priced; cache prices may be 0.
-            if not valid or v < 0 or (key in ("input", "output") and v == 0):
-                problem = f"prices_per_mtok.{key} is missing or invalid ({v!r})"
+            value = _price_value(raw.get(key), key)
+            if value is None:
+                problem = f"price {key!r} for {model_id!r} is missing or invalid ({raw.get(key)!r})"
                 break
-            values[key] = float(v)
-        if not problem:
-            prices = Prices(**values)
-    if problem:
-        w.warn(f"advisor line {name!r} is misconfigured: {problem}")
-    return Line(name=name, provider=str(provider), model=str(model), prices=prices, problem=problem)
+            values[key] = value
+    prices = None
+    if not problem:
+        write = (
+            _price_value(raw.get("cache_write"), "cache_write") if "cache_write" in raw else None
+        )
+        if write is None:
+            write = values["input"] * CACHE_WRITE_MULTIPLIER.get(cache_ttl, 1.25)
+        prices = Prices(cache_write=write, **values)
+    else:
+        w.warn(f"advisor model {model_id!r} cannot be used: {problem}")
+    return Line(name=name, provider=PROVIDER, model=model_id, prices=prices, problem=problem)
 
 
 def _apply_auxiliary(line: Line, auxiliary: Any, max_tokens: int, w: _Collector) -> Line:
@@ -277,7 +311,7 @@ def _apply_auxiliary(line: Line, auxiliary: Any, max_tokens: int, w: _Collector)
                     f"auxiliary.{line.task_key}.extra_body replaces the plugin's reply "
                     f"limit; add max_tokens: {max_tokens} to it"
                 )
-                w.warn(f"advisor line {line.name!r} is misconfigured: {problem}")
+                w.warn(f"advisor model {line.name!r} cannot be used: {problem}")
     return Line(
         name=line.name,
         provider=provider,
@@ -313,18 +347,35 @@ def parse_settings(raw: Any, auxiliary: Any = None, approvals: Any = None) -> Se
         w.warn(f"plugins.entries.{PLUGIN_ID} must be a mapping; using defaults")
         raw = {}
 
-    lines_raw = raw.get("lines")
-    if lines_raw is None:
-        lines_raw = copy.deepcopy(DEFAULT_LINES)
-    elif not isinstance(lines_raw, dict) or not lines_raw:
-        w.warn("lines must be a non-empty mapping; using the default sonnet line")
-        lines_raw = copy.deepcopy(DEFAULT_LINES)
-    lines = {str(n): _line(str(n), v, w) for n, v in lines_raw.items()}
+    for old in ("lines", "default_line"):
+        if old in raw:
+            w.warn(
+                f"{old} is no longer used; choose the advisor with advisor.model "
+                "(and advisor.also_allow for more than one)"
+            )
 
-    default_line = raw.get("default_line") or DEFAULTS["default_line"]
-    if not isinstance(default_line, str) or default_line not in lines:
-        w.warn(f"default_line {default_line!r} is not a configured line")
-        default_line = str(default_line)
+    adv = _section(raw, "advisor", w)
+    ad = DEFAULTS["advisor"]
+    cache_ttl = _cache_ttl(adv.get("cache_ttl"), w)
+    overrides = adv.get("prices_per_mtok") or {}
+    if not isinstance(overrides, dict):
+        w.warn("advisor.prices_per_mtok must be a mapping of model to prices; ignoring it")
+        overrides = {}
+    model_ref = adv.get("model", ad["model"])
+    if not isinstance(model_ref, str) or not model_ref.strip():
+        w.warn(f"advisor.model must be a model name such as sonnet or opus; got {model_ref!r}")
+        model_ref = ad["model"]
+    also = adv.get("also_allow") or []
+    if isinstance(also, str):
+        also = [also]
+    if not isinstance(also, list | tuple):
+        w.warn("advisor.also_allow must be a list of model names; ignoring it")
+        also = []
+    lines: dict[str, Line] = {}
+    for ref in [model_ref, *[str(x) for x in also if str(x).strip()]]:
+        line = _model_line(ref, overrides, cache_ttl, w)
+        lines.setdefault(line.name, line)
+    default_line = resolve_model(model_ref)[0]
 
     b = _section(raw, "budget", w)
     bd = DEFAULTS["budget"]
@@ -376,9 +427,6 @@ def parse_settings(raw: Any, auxiliary: Any = None, approvals: Any = None) -> Se
     a = _section(raw, "approval", w)
     c = _section(raw, "context", w)
     cd = DEFAULTS["context"]
-    adv = _section(raw, "advisor", w)
-    ad = DEFAULTS["advisor"]
-
     senders_raw = raw.get("allowed_senders")
     if senders_raw is None:
         senders: tuple[str, ...] = ()
@@ -416,7 +464,7 @@ def parse_settings(raw: Any, auxiliary: Any = None, approvals: Any = None) -> Se
             w,
             allow_zero=False,
         ),
-        cache_ttl=_cache_ttl(adv.get("cache_ttl"), w),
+        cache_ttl=cache_ttl,
         allowed_senders=senders,
         bill_footer=_boolean(raw.get("bill_footer"), True, "bill_footer", w),
         log_transcripts=_boolean(raw.get("log_transcripts"), False, "log_transcripts", w),
