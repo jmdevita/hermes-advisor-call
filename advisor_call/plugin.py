@@ -16,7 +16,13 @@ from .tools import TOOLS, TOOLSET, make_handler
 
 log = logging.getLogger(__name__)
 
-HOOKS = ("pre_tool_call", "pre_llm_call", "transform_llm_output", "on_session_finalize")
+HOOKS = (
+    "pre_tool_call",
+    "pre_llm_call",
+    "transform_llm_output",
+    "transform_tool_result",
+    "on_session_finalize",
+)
 
 
 def register(

@@ -28,6 +28,7 @@ log = logging.getLogger(__name__)
 MAX_SESSIONS = 256
 TOOL_ARGS_CHARS = 400
 OMITTED_PREFIX = "...[earlier conversation omitted]...\n"
+FIRST_REQUEST_CHARS = 2000  # at most this much of the first request is kept
 ADVISOR_TOOL_PREFIX = "advisor_call_"
 
 Redactor = Callable[[str], str]
@@ -283,13 +284,25 @@ def render_transcript(
 
     text = "\n\n".join(blocks)
     if limit_chars > 0 and len(text) > limit_chars:
-        keep = max(0, limit_chars - len(OMITTED_PREFIX))
+        # Keep the user's first request (what they actually asked), then the
+        # most recent part of the session.
+        first = next((b for b in blocks if b.startswith("### USER\n")), "")
+        head = ""
+        if first:
+            cap = max(0, min(FIRST_REQUEST_CHARS, limit_chars // 4))
+            body = first[len("### USER\n") :]
+            if len(body) > cap:
+                body = body[: max(0, cap - 1)].rstrip() + "…"
+            head = f"### USER (first request)\n{body}\n\n"
+        keep = max(0, limit_chars - len(OMITTED_PREFIX) - len(head))
         tail = text[-keep:] if keep else ""
         # Start at a message boundary when one is close by.
         boundary = tail.find("\n### ")
         if 0 <= boundary < len(tail) // 2:
             tail = tail[boundary + 1 :]
-        text = OMITTED_PREFIX + tail
+        if first and tail.startswith(first):
+            head = ""  # the first request is in the kept part anyway
+        text = head + OMITTED_PREFIX + tail
     if redact is not None:
         text = redact(text)
     return text

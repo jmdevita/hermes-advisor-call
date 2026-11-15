@@ -65,10 +65,27 @@ def test_tool_output_truncated_head_and_tail():
 def test_tail_kept_at_limit():
     messages = [{"role": "user", "content": f"message {i} " + "y" * 200} for i in range(100)]
     text = render(messages, limit=2_000)
-    assert text.startswith(OMITTED_PREFIX)
     assert len(text) <= 2_000
-    assert "message 99" in text and "message 0 " not in text
-    assert text[len(OMITTED_PREFIX) :].startswith("### USER")  # starts on a boundary
+    head, rest = text.split(OMITTED_PREFIX, 1)
+    assert head.startswith("### USER (first request)\nmessage 0 ")  # the original ask is kept
+    assert "message 99" in rest and "message 1 " not in text
+    assert rest.startswith("### USER")  # the tail starts on a boundary
+
+
+def test_first_request_kept_and_capped():
+    first = {"role": "user", "content": "FIRST-ASK " + "z" * 5_000}
+    rest = [{"role": "assistant", "content": "x" * 300} for _ in range(200)]
+    text = render([first, *rest], limit=8_000)
+    head = text.split(OMITTED_PREFIX, 1)[0]
+    assert head.startswith("### USER (first request)\nFIRST-ASK")
+    assert len(head) <= 2_000 + 60  # capped at 2,000 characters plus the label
+    assert len(text) <= 8_000
+
+
+def test_first_request_not_duplicated_when_it_fits():
+    messages = [{"role": "user", "content": "only ask"}, {"role": "assistant", "content": "ok"}]
+    text = render(messages, limit=40_000)
+    assert text.count("only ask") == 1 and "first request" not in text
 
 
 def test_in_flight_advisor_call_excluded():

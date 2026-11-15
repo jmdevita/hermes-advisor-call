@@ -6,6 +6,7 @@ Hermes bounds async command results at 30 s on the CLI (DESIGN.md, O-8).
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import re
 from typing import Any
@@ -157,6 +158,19 @@ class SecondOpinionCommand:
                 cap = call_cap(settings.budget, self.rt.budget(settings))
                 out.append(f"Per-call cap today: {money(cap)}")
             except (ValueError, LedgerError):
+                pass
+        if settings.suggest.mode != "off":
+            try:
+                today = self.rt.today()
+                made, followed = self.rt.ledger.suggestion_stats(
+                    today - dt.timedelta(days=6), today
+                )
+                if made:
+                    out.append(
+                        f"Auto-suggest, last 7 days: {plural(made, 'suggestion')}, "
+                        f"{followed} led to a call"
+                    )
+            except LedgerError:
                 pass
         if session_id:
             call = self.rt.manager.latest(session_id)

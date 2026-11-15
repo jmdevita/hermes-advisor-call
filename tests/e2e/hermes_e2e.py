@@ -146,6 +146,28 @@ def main() -> int:
         check(
             "breakpoints A and B on the follow-up", markers(second) == [0, 1], str(markers(second))
         )
+    # Auto-suggest: three failing built-in tool calls through Hermes' dispatcher.
+    tries = []
+    for n, path in enumerate(("/nonexistent/a.txt", "/nonexistent/b.txt", "/nonexistent/c.txt")):
+        tries.append(
+            model_tools.handle_function_call(
+                "read_file",
+                {"path": path},
+                task_id="t",
+                session_id="sess-stuck",
+                api_request_id=f"req-{n}",
+            )
+        )
+    try:
+        third = json.loads(tries[2])
+    except ValueError:
+        third = {}
+    check(
+        "auto-suggest note on the 3rd failing tool call (result still JSON)",
+        "advisor_call_open" in str(third.get("advisor_call_note", ""))
+        and "advisor_call_note" not in tries[1],
+        tries[2][-200:],
+    )
     bill = said.get("bill", {})
     check(
         "bill flagged as estimate (Hermes drops cache counts)",

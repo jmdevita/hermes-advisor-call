@@ -15,6 +15,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from .suggest import MODES as SUGGEST_MODES
+from .suggest import SuggestSettings
+
 log = logging.getLogger(__name__)
 
 PLUGIN_ID = "advisor-call"
@@ -62,6 +65,16 @@ DEFAULTS: dict[str, Any] = {
         "max_tokens": 4000,
         "timeout_seconds": 180,
         "cache_ttl": "5m",
+    },
+    "suggest": {
+        "mode": "both",
+        "error_streak": 3,
+        "same_error": 3,
+        "loop": 3,
+        "cycles": True,
+        "cooldown_calls": 10,
+        "max_per_session": 3,
+        "ignore_tools": [],
     },
     "allowed_senders": [],
     "bill_footer": True,
@@ -142,6 +155,7 @@ class Settings:
     bill_footer: bool
     log_transcripts: bool
     approvals_mode: str = "manual"  # Hermes' approvals.mode: manual | smart | off
+    suggest: SuggestSettings = field(default_factory=SuggestSettings)
     warnings: tuple[str, ...] = field(default=())
 
     def line(self, name: str | None) -> Line | None:
@@ -201,6 +215,53 @@ def _boolean(raw: Any, default: bool, path: str, w: _Collector) -> bool:
         return raw
     w.warn(f"{path} must be true or false; got {raw!r}, using {default!r}")
     return default
+
+
+def _count(raw: Any, default: int, path: str, w: _Collector) -> int:
+    """A whole number >= 0 (0 turns the rule off)."""
+    if raw is None:
+        return default
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
+        return raw
+    w.warn(f"{path} must be a whole number >= 0; got {raw!r}, using {default!r}")
+    return default
+
+
+def _suggest(raw: Any, w: _Collector) -> SuggestSettings:
+    d = DEFAULTS["suggest"]
+    if raw is None:
+        raw = {}
+    if raw is False:  # `suggest: off`
+        raw = {"mode": "off"}
+    if not isinstance(raw, dict):
+        w.warn("suggest must be a mapping; using defaults")
+        raw = {}
+    mode = raw.get("mode", d["mode"])
+    if mode is False:  # YAML `mode: off`
+        mode = "off"
+    if not isinstance(mode, str) or mode.strip().lower() not in SUGGEST_MODES:
+        w.warn(f"suggest.mode must be one of {', '.join(SUGGEST_MODES)}; got {mode!r}, using both")
+        mode = d["mode"]
+    ignore = raw.get("ignore_tools") or []
+    if isinstance(ignore, str):
+        ignore = [ignore]
+    if not isinstance(ignore, list | tuple):
+        w.warn("suggest.ignore_tools must be a list of tool names; ignoring it")
+        ignore = []
+    return SuggestSettings(
+        mode=mode.strip().lower(),
+        error_streak=_count(raw.get("error_streak"), d["error_streak"], "suggest.error_streak", w),
+        same_error=_count(raw.get("same_error"), d["same_error"], "suggest.same_error", w),
+        loop=_count(raw.get("loop"), d["loop"], "suggest.loop", w),
+        cycles=_boolean(raw.get("cycles"), d["cycles"], "suggest.cycles", w),
+        cooldown_calls=_count(
+            raw.get("cooldown_calls"), d["cooldown_calls"], "suggest.cooldown_calls", w
+        ),
+        max_per_session=_count(
+            raw.get("max_per_session"), d["max_per_session"], "suggest.max_per_session", w
+        ),
+        ignore_tools=frozenset(str(t).strip() for t in ignore if str(t).strip()),
+    )
 
 
 def _section(raw: dict[str, Any], key: str, w: _Collector) -> dict[str, Any]:
@@ -477,6 +538,7 @@ def parse_settings(raw: Any, auxiliary: Any = None, approvals: Any = None) -> Se
         allowed_senders=senders,
         bill_footer=_boolean(raw.get("bill_footer"), True, "bill_footer", w),
         log_transcripts=_boolean(raw.get("log_transcripts"), False, "log_transcripts", w),
+        suggest=_suggest(raw.get("suggest"), w),
         approvals_mode=normalize_approvals_mode(
             approvals.get("mode") if isinstance(approvals, dict) else None
         ),

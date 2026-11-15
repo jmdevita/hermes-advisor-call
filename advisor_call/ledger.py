@@ -40,6 +40,16 @@ CREATE TABLE IF NOT EXISTS exchanges (
 );
 CREATE INDEX IF NOT EXISTS idx_exchanges_day ON exchanges(day);
 
+CREATE TABLE IF NOT EXISTS suggestions (
+  id INTEGER PRIMARY KEY,
+  ts REAL NOT NULL,
+  day TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  kind TEXT NOT NULL,              -- error_streak | same_error | loop | cycle
+  led_to_call INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_suggestions_day ON suggestions(day);
+
 CREATE TABLE IF NOT EXISTS calls (
   call_id TEXT PRIMARY KEY, session_id TEXT, line TEXT,
   started_at REAL, ended_at REAL, end_reason TEXT,
@@ -247,6 +257,42 @@ class Ledger:
             d = first + dt.timedelta(days=i)
             out.append((d, found.get(day_key(d), 0.0)))
         return out
+
+    def record_suggestion(self, *, ts: float, day: dt.date, session_id: str, kind: str) -> None:
+        def write(db: sqlite3.Connection) -> None:
+            db.execute(
+                "INSERT INTO suggestions (ts, day, session_id, kind) VALUES (?,?,?,?)",
+                (ts, day_key(day), session_id, kind),
+            )
+            db.commit()
+
+        self._run(write)
+
+    def mark_suggestion_followed(self, session_id: str) -> None:
+        """The session's latest suggestion led to an advisor call."""
+
+        def write(db: sqlite3.Connection) -> None:
+            db.execute(
+                "UPDATE suggestions SET led_to_call = 1 WHERE id = (SELECT MAX(id) FROM "
+                "suggestions WHERE session_id = ? AND led_to_call = 0)",
+                (session_id,),
+            )
+            db.commit()
+
+        self._run(write)
+
+    def suggestion_stats(self, since: dt.date, until: dt.date) -> tuple[int, int]:
+        """(suggestions, of which led to a call) in [since, until]."""
+
+        def read(db: sqlite3.Connection) -> tuple[int, int]:
+            row = db.execute(
+                "SELECT COUNT(*), COALESCE(SUM(led_to_call),0) FROM suggestions "
+                "WHERE day >= ? AND day <= ?",
+                (day_key(since), day_key(until)),
+            ).fetchone()
+            return int(row[0]), int(row[1])
+
+        return self._run(read)
 
     def has_estimates(self, since: dt.date, until: dt.date) -> bool:
         """True if any exchange in [since, until] was billed by estimate."""

@@ -20,6 +20,7 @@ from .context import ContextStore, Redactor, hermes_redactor
 from .cost import BudgetState, budget_state, cycle_for
 from .ledger import Ledger, LedgerError
 from .settings import Settings, read_settings
+from .suggest import Tracker
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ class Runtime:
         self._redactor_factory = redactor
         self._redactor: Redactor | None = None
         self.manager = CallManager(clock=self.clock.time, on_call_end=self.persist_call)
+        self.tracker = Tracker()  # auto-suggest counters
         self._lock = threading.Lock()
         # One-shot authorizations left by the approval hook, per session.
         self._authorizations: OrderedDict[str, tuple[str, float]] = OrderedDict()

@@ -25,6 +25,7 @@ from .ledger import LedgerError
 from .prompts import for_platform
 from .runtime import Runtime
 from .settings import Settings
+from .suggest import ADVISOR_TOOL_PREFIX, BRIDGE_TOOLS, UNATTENDED_PLATFORMS, annotate
 from .tools import OPEN, SAY
 
 log = logging.getLogger(__name__)
@@ -212,6 +213,7 @@ class Hooks:
         **_: Any,
     ) -> dict[str, str] | None:
         try:
+            self.rt.tracker.new_turn(session_id)  # the user spoke: auto-suggest counts afresh
             self.rt.context.record_turn(
                 session_id,
                 conversation_history=conversation_history,
@@ -249,21 +251,115 @@ class Hooks:
     # ----------------------------------------------------------------- footer
 
     def transform_llm_output(
-        self, response_text: Any = None, session_id: Any = None, **_: Any
+        self, response_text: Any = None, session_id: Any = None, platform: Any = None, **_: Any
     ) -> str | None:
         try:
-            if not self.rt.manager.take_activity(session_id):
+            active = self.rt.manager.take_activity(session_id)
+            notice = self.rt.tracker.take_notice(session_id)
+            if not isinstance(response_text, str):
                 return None
             settings = self.rt.settings()
-            if not settings.bill_footer or not isinstance(response_text, str):
+            lines: list[str] = []
+            if active and settings.bill_footer:
+                call = self.rt.manager.latest(session_id)
+                if call is not None:
+                    lines.append(self.footer(call, settings))
+            if notice and settings.suggest.tells_user:
+                lines.append(
+                    for_platform(
+                        f"💡 The agent looked stuck ({notice}) and didn't call the advisor. "
+                        "You can ask it yourself with /second-opinion ask <question>, or allow "
+                        "calls for this session with /second-opinion allow.",
+                        platform,
+                    )
+                )
+            if not lines:
                 return None
-            call = self.rt.manager.latest(session_id)
-            if call is None:
-                return None
-            return f"{response_text.rstrip()}\n\n{self.footer(call, settings)}"
+            return response_text.rstrip() + "\n\n" + "\n".join(lines)
         except Exception:  # noqa: BLE001
             log.exception("advisor-call: bill footer failed")
             return None
+
+    # ----------------------------------------------------------------- auto-suggest
+
+    def transform_tool_result(
+        self,
+        tool_name: Any = None,
+        args: Any = None,
+        result: Any = None,
+        session_id: Any = None,
+        status: Any = None,
+        error_message: Any = None,
+        api_request_id: Any = None,
+        **_: Any,
+    ) -> str | None:
+        """Watch tool results for signs of being stuck (suggest.py). Appends a
+        one-line hint to the result that tripped a rule; never blocks."""
+        try:
+            if not isinstance(session_id, str) or not session_id or not isinstance(result, str):
+                return None
+            name = str(tool_name or "")
+            settings = self.rt.settings()
+            sg = settings.suggest
+            if (
+                sg.mode == "off"
+                or not name
+                or name.startswith(ADVISOR_TOOL_PREFIX)
+                or name in BRIDGE_TOOLS
+                or name in sg.ignore_tools
+            ):
+                return None
+            identity = self.rt.context.identity(session_id)
+            unattended = bool(identity) and identity[1].lower() in UNATTENDED_PLATFORMS
+
+            def allowed() -> bool:
+                return self._suggestion_possible(settings, session_id, unattended)
+
+            detection = self.rt.tracker.observe(
+                session_id,
+                sg,
+                tool_name=name,
+                args=args,
+                result=result,
+                failed=status == "error",
+                error_message=str(error_message or ""),
+                batch=str(api_request_id or ""),
+                allowed=allowed,
+            )
+            if detection is None:
+                return None
+            try:
+                self.rt.ledger.record_suggestion(
+                    ts=self.rt.clock.time(),
+                    day=self.rt.today(),
+                    session_id=session_id,
+                    kind=detection.kind,
+                )
+            except LedgerError as exc:
+                log.warning("advisor-call: could not record a suggestion: %s", exc)
+            if not sg.nudges_executor:
+                return None
+            return annotate(result, detection.reason)
+        except Exception:  # noqa: BLE001 - fail open: never disturb a tool result on a bug
+            log.exception("advisor-call: auto-suggest failed")
+            return None
+
+    def _suggestion_possible(self, settings: Settings, session_id: str, unattended: bool) -> bool:
+        """Only suggest a call that could actually happen."""
+        try:
+            self.rt.manager.get(session_id)
+            return False  # a call is already open
+        except CallError:
+            pass
+        if unattended and self.rt.manager.grant_for(session_id) is None:
+            return False  # nobody could approve it
+        line = settings.line(None)
+        if line is None or not line.usable or settings.budget.cycle_error:
+            return False
+        try:
+            return self.rt.budget(settings).available > 0
+        except (ValueError, LedgerError):
+            return False
 
     def footer(self, call: Call, settings: Settings) -> str:
         cost = f"~{money(call.cost_usd)}" if call.estimated else money(call.cost_usd)

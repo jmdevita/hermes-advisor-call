@@ -136,6 +136,15 @@ plugins:
         max_tokens: 4000            # reply limit per message
         timeout_seconds: 180
         cache_ttl: 5m               # 5m | 1h | off
+      suggest:                      # auto-suggest, see below
+        mode: both                  # off | executor | user | both
+        error_streak: 3             # 0 turns a rule off
+        same_error: 3
+        loop: 3
+        cycles: true
+        cooldown_calls: 10
+        max_per_session: 3
+        ignore_tools: []
       allowed_senders: []           # gateway user IDs allowed to spend; [] = anyone the gateway admits
       bill_footer: true
       log_transcripts: false
@@ -248,6 +257,43 @@ their sessions. Local CLI and TUI sessions are treated as the owner.
 In Telegram the command appears as `/second_opinion`. If the name is taken by
 another plugin, it is registered as `/advisorcall` instead.
 
+## Auto-suggest
+
+Small models often don't notice they are stuck. The plugin watches tool
+results and, when the executor looks stuck, suggests a second opinion. It
+never calls the advisor itself and never blocks a tool: approval and the
+caps work exactly as before. Detection is plain counting, with no model
+calls, so it costs nothing.
+
+It looks for, per session (counters reset when you send a new message and
+after an advisor call):
+
+- **3 failed tool calls in a row**;
+- **the same error 3 times** in a turn, even with other calls between
+  (numbers, ids and spacing are ignored when comparing errors);
+- **the same tool, arguments and result 3 times in a row** (a repeated call
+  whose result changes, such as polling a build, does not count);
+- **a repeating cycle** of 2 to 5 calls with the same results, seen twice.
+
+Identical calls from one model response count once.
+
+When a rule trips:
+
+- **The executor gets a note** on that tool result, saying what happened and
+  that it can get a second opinion or ask you. It decides what to do.
+- **You get a line** at the end of the reply, but only if the executor did
+  not call: `💡 The agent looked stuck (…) and didn't call the advisor.`
+
+It suggests at most once per 10 tool calls and 3 times per session, and only
+when a call could actually happen (no call open, budget left, setup
+complete; in unattended sessions such as cron, only after
+`/second-opinion allow`). `/second-opinion status` shows how many
+suggestions were made in the last 7 days and how many led to a call.
+
+Settings (`suggest:`): `mode` is `both` (default), `executor` (note only),
+`user` (your line only) or `off`. The thresholds can be raised, or set to 0
+to turn a rule off. List tools that legitimately repeat in `ignore_tools`.
+
 ## Billing
 
 With prompt caching off, the bill is exact. **With caching on (the default),
@@ -266,10 +312,10 @@ have been processed and billed anyway.
 
 ## Privacy and security
 
-- **What leaves the machine:** the tail of the session transcript (once, in
-  the first message) and what the executor writes, sent to the advisor
-  advisor's provider (Anthropic). Nothing else is sent anywhere: no telemetry, no
-  third-party service.
+- **What leaves the machine:** your first request and the most recent part of
+  the session transcript (once, in the first message) and what the executor writes, sent to the advisor's provider
+  (Anthropic). Nothing else is sent anywhere: no telemetry, no third-party
+  service.
 - **Secrets** are redacted with Hermes' own redactor before sending, even if
   you turned Hermes' redaction off. API keys and credentials in URLs are
   masked. Redaction is pattern-based and can miss unusual formats.
@@ -307,7 +353,8 @@ have been processed and billed anyway.
 - **The bill is an estimate while caching is on** (see Billing).
 - **Calls do not survive a gateway restart.** The next message gets "call
   dropped (gateway restarted); open a new call". The ledger is kept.
-- **The executor decides when to call.** There is no automatic escalation.
+- **The executor decides when to call.** Auto-suggest nudges it when it
+  looks stuck, but never calls on its own.
   A small model may call too rarely or too often.
 - Subagents (`delegate_task` children) are not specially supported; the
   normal approval rule applies to them.
