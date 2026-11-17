@@ -3,8 +3,8 @@
 How the plugin is built and why. Section 1 answers the questions that had to
 be settled by reading the Hermes source before writing code; section 2
 records the design decisions they led to; sections 3 to 5 are implementation
-notes per build phase. Test ids used in the code and below (U-n for unit
-tests, L-n for live checks) are listed in Appendix A.
+notes per build phase; section 7 has the live checks and the release
+checklist.
 
 **Reference:** Hermes Agent `v0.23.1` (commit `3b421578`). Line numbers drift
 between releases; search by name. "Verified" means read in the source and,
@@ -328,7 +328,8 @@ organization admin key on the Hermes host, and its data lags 30 minutes to
   reachable through tool search, by name: "call `tool_search` for
   `advisor_call` if the tools are not listed".
 - README documents `tools.tool_search.enabled: off` as the fallback if the
-  executor fails to find them. Live check L-3 records which way it worked.
+  executor fails to find them. The live check (section 7) found the executor reaches them through tool
+  search.
 
 ### 2.4 Provider fallback (from O-1 and the error path)
 
@@ -477,7 +478,7 @@ fits.
   cycle budget left divided by the days left, and the per-call cap scaled
   with it (`pacing`, `max_per_call_usd`, `max_per_day_usd`). It made the
   caps hard to predict (a `per_call_usd: 0.01` showed up as $0.016 in live
-  check L-9). Now three fixed caps: `per_call_usd`, `per_day_usd`,
+  check). Now three fixed caps: `per_call_usd`, `per_day_usd`,
   `per_month_usd` over the cycle from `cycle_start_day`. The removed keys
   are ignored with a warning.
 - **One advisor model.** v0.1 let the executor name another model on a call
@@ -486,7 +487,7 @@ fits.
   `advisor.model`; the tool has no `model` argument and a grant covers the
   session. `also_allow` is ignored with a warning.
 - **Considered and kept: prompt caching.** The Console's cache breakdown for
-  Nov 14 settles live check L-6: about 3.3K uncached, 25K cache-read and
+  Nov 14 settles the caching check: about 3.3K uncached, 25K cache-read and
   75K cache-write input tokens, so caching works on the real API, and the
   per-type prices give about $0.40 against $0.41 charged and $0.45 counted
   by the plugin. Savings were about one cent because most test calls had one
@@ -579,28 +580,34 @@ fits.
 - **Source files must not contain invisible characters.** Hermes' security
   scan flags them; the reason sanitiser builds its pattern from code points.
 
-## 7. Live checks (Phase 4)
+## 7. Live checks
 
-On the maintainer's Hermes VM (Telegram gateway, local Qwen executor),
-installed from `c6fc519`.
+### v0.1 acceptance (2026-11-14 and 15)
 
-| ID | Result | Notes |
-|---|---|---|
-| L-1 | Pass | Enabled, pinned to `c6fc5195`, no load error, no private-import warning; `capabilities` declares none (none needed) |
-| L-2 | Pass | `/second_opinion status`: $5.26 allowance ($100 / 19 days), $0.79 per-call cap, cycle Nov 3 to Dec 2, matching the Console's next credit date (Dec 3) |
-| L-3 | Pass | The executor found `advisor_call_open` through `tool_search` and called it through `tool_call` (O-10 confirmed live). Hermes showed the approval prompt with the plugin's text under "Why it was flagged" |
-| L-4 | Pass | Deny: nothing sent, the executor reported the refusal and did not retry |
-| L-5 | Pass (second attempt) | First attempt: Anthropic returned 400 "This API key is not scoped to a workspace", because the key was created with Organization scope. The plugin handled it as designed: $0.00 billed, the call ended with reason `error`, the bill footer shown, no invented advice. With a workspace-scoped key: approved once, 2 messages (open, then the executor ran checks on the machine and sent the results), hung up by the executor; footer `2 messages · ~$0.13 of $0.79 (estimate) · ended (hung up) · today $0.13 of $5.26`; `/second_opinion bill` shows $0.13 today and "(includes estimates)". The advice was substantive (it caught a symlinked directory a backup tool would have skipped) |
-| L-12 | Pass | Cycle to date (all calls of Nov 14): the plugin counted $0.45 (marked as including estimates); the Console's promotional credit went from $100.00 to $99.59, so $0.41. The estimate ran about 10% high, the intended direction; the plugin's pacing uses its own, higher figure |
-| L-6 | Pass (settled 2026-11-17, see 2.10; the note that follows was written before the Console's cache breakdown was checked) | Console usage for Nov 14: 103,360 input and 20,779 output tokens. Billing all input at the plain $2.00/MTok gives $0.415, matching the $0.41 charged, which hints that the cache markers may not take effect on the real API (cache writes would have cost more; most test calls had only 1-2 messages, so few cache reads were possible). The local end-to-end check shows the markers on the wire. If caching is not happening, real cost equals `cache_ttl: off`, still under the plugin's estimate. Accepted as good enough by the maintainer; a per-type token breakdown from the Console would settle it |
-| L-7 | Pass | Tapped Session; a second call in the same chat ran with no prompt |
-| L-8 | Pass | Tapped Always in one session; after `/new` the prompt appeared again (the session id in the rule key works) |
-| L-9 | Pass | With `per_call_usd: 0.01` (scaled to about $0.016 by the dynamic pacing of v0.1, since removed) the call ended with "bill cap reached" before anything was sent. $0.01 rather than $0.03: at $0.03 the scaled cap (~$0.05) sits right at the cost of one opening message, so the outcome is not deterministic |
-| L-10 | Pass | `/second_opinion allow`, then a call ran with no prompt |
-| L-11 | Pass | `/second_opinion ask` answered directly; `/second_opinion hangup` during an executor call ended it and the executor stopped |
-| L-13 | Pass | With `advisor.max_tokens: 300`, Sonnet 5.5 spent the whole limit thinking and returned no text, twice: the limit reaches the API (without it the long answer would have come back). The plugin reported "empty reply", billed ~$0.01 each, closed the call; the executor answered on its own without pretending to be the advisor. Console check of output tokens pending |
+Thirteen checks on the maintainer's Hermes VM (Telegram gateway, local Qwen
+executor) against the real API, all passed: load and status, the executor
+finding the tools through tool search, deny, a multi-message call, the
+session and always approvals, the per-call cap, `/second-opinion allow`,
+`ask` and `hangup`, the reply limit, the bill against the Console ($0.45
+counted, $0.41 charged) and caching (section 2.10). The per-check table is
+in the git history (`DESIGN.md` at v0.1.0).
 
-Findings so far:
+### Release checklist
+
+Before a release, on a real Hermes with the real API:
+
+1. Ask the executor for a second opinion, approve it, and get a reply with
+   the bill line.
+2. Set `per_call_usd: 0.01` and run a call: it ends with "bill cap reached"
+   before anything is sent. Restore the setting.
+3. `/second-opinion ask <question>` answers directly.
+4. Compare `/second-opinion bill` with the Console for the same period: the
+   plugin's figure should be the same or slightly higher.
+
+Also run `scripts/ci.sh`, `scripts/hermes-smoke.sh` and
+`scripts/hermes-e2e.sh`, the last two against the Hermes release in use.
+
+### Findings from the v0.1 checks
 
 - **Use a workspace-scoped API key.** An organization-scoped key needs an
   `anthropic-workspace-id` header that Hermes does not send, and it also
@@ -621,73 +628,6 @@ Findings so far:
   against the limit. The plugin now warns below 1,024.
 
 ---
-
-## Appendix A: test ids
-
-### Unit tests (CI, no Hermes, no network)
-
-| ID | Test |
-|---|---|
-| U-1 | Settings merge over defaults; unknown keys ignored; invalid values fall back with a warning |
-| U-2 | Cost from usage matches hand-computed values, including cache read and cache write |
-| U-3 | The pre-flight estimate is at least the billed cost for representative inputs |
-| U-4 | Ledger writes and day totals; a new day resets the total |
-| U-5 | A ledger read failure makes opening a call fail closed |
-| U-6 | A call ends with `bill_cap` when the estimate would exceed the cap, and nothing is sent |
-| U-7 | A call ends with `day_cap` across two calls on the same day |
-| U-8 | `turn_limit` is enforced at `max_messages_per_call` |
-| U-9 | Idle expiry with a fake clock |
-| U-10 | One open call per session; a second open returns the first |
-| U-11 | Session isolation: session B cannot read, speak on, or hang up session A's call, and a wrong `call_id` never resolves to another session |
-| U-12 | Transcript rendering: system skipped, tool output cut head and tail, tail kept at the limit, in-flight advisor tool call excluded, redaction applied |
-| U-13 | Opening message layout: system + transcript + question; breakpoint A present |
-| U-14 | Third exchange: breakpoints on the opening and the last reply only; never more than 2 |
-| U-15 | `cache_ttl: off` produces no markers; `1h` adds the ttl field |
-| U-16 | An empty advisor reply is an error and is not appended to the call |
-| U-17 | An advisor exception returns an error result; the call stays open; nothing raises out of the handler |
-| U-18 | `advisor_call_open` returns the reply and the bill |
-| U-19 | `advisor_call_hangup` makes no LLM call and returns the final bill |
-| U-20 | A handler called without `session_id` returns an error |
-| U-21 | The approval hook returns `None` for other tools |
-| U-22 | The hook returns `approve` with `rule_key == "advisor_call:<line>:<session_id>"` |
-| U-23 | The hook blocks when today's allowance or the cycle budget is used up |
-| U-24 | The hook returns `None` after `/second-opinion allow`, and `approve` again after `/second-opinion revoke` |
-| U-25 | The hook blocks a sender outside `allowed_senders` |
-| U-26 | The hook blocks when approvals are off and there is no user grant; allows with a grant |
-| U-27 | The model-written reason is sanitized and truncated in the approval message |
-| U-28 | `/second-opinion` subcommands: status, allow with a custom cap clamped to the day's remainder, ask, hangup, bill, transcript |
-| U-29 | The bill footer is added only on turns with advisor activity |
-| U-30 | `register()` registers every tool, hook, the middleware, the command, the guidance section and one auxiliary task per line |
-| U-31 | The daily cap is `per_day_usd` on every day of the cycle |
-| U-32 | The daily cap does not change as spend accrues; what is available never goes below 0 |
-| U-33 | Cycle boundaries: `cycle_start_day: 31` in 30-day months and February; spend from the previous cycle is excluded |
-| U-34 | The cycle total is a hard limit |
-| U-35 | The per-call cap is `per_call_usd`, clamped to what is left today; a custom cap from `/second-opinion allow` replaces it |
-| U-36 | The per-call cap is fixed when the call opens; the approval message shows that cap |
-| U-37 | Missing or invalid `cycle_start_day`: the hook blocks, `/second-opinion ask` and `allow` refuse, `/second-opinion status` shows the setup message |
-| U-38 | `cycle_start_day: 3`: on Nov 14 the window is Nov 3 to Dec 2 with 19 days left; Dec 2 is the last day; Dec 3 starts a new cycle with zero spend |
-
-### Live checks (a real Hermes and the real API)
-
-| ID | Check | Expected |
-|---|---|---|
-| L-1 | `hermes plugins list`, `hermes plugins capabilities advisor-call` | Enabled, no load error, no private-import warning |
-| L-2 | `/second-opinion status` in Telegram | The sonnet line, $0.00 today, today's allowance, the per-call cap and the cycle window; the window's end matches the credit expiry date in the Claude Console |
-| L-2b | Remove `cycle_start_day`, then try a call | Refused with the setup message |
-| L-3 | Ask the executor for a second opinion | An approval prompt with the reason and caps (record whether the executor found the tool through tool search) |
-| L-4 | Tap Deny | No API call; the executor reports the refusal and does not retry |
-| L-5 | Approve once, run three or more messages, hang up | Replies come back; the footer shows the bill, marked as an estimate |
-| L-6 | Compare the Console's usage for the messages of L-5 | Cache reads appear on messages 2 and 3 (the plugin cannot see them: DESIGN.md O-2) |
-| L-7 | Tap Session, then trigger a second call in the same session | No second prompt |
-| L-8 | Tap Always in one session, start a new session, trigger a call | The prompt appears again |
-| L-9 | Set `per_call_usd: 0.03`, run a call | The call ends with `bill_cap`; the executor is told to continue alone |
-| L-10 | Send a message, then `/second-opinion allow`, then ask the executor to call | No prompt; the executor was told it is pre-authorized |
-| L-11 | `/second-opinion ask <question>`; `/second-opinion hangup` during an open call | A direct reply; the call ends and the executor is told |
-| L-12 | Compare `/second-opinion bill` with the Console for the same period | Within the estimate's bounds (DESIGN.md 2.1); record the difference |
-| L-13 | A deliberately long question with `advisor.max_tokens: 300` (restart after changing it) | At most 300 output tokens in the Console |
-
-Also confirm once: with `approvals.mode: smart`, the approval still reaches
-the human.
 
 ## 6. Pre-release review (2026-11-14)
 

@@ -1,4 +1,4 @@
-"""U-6 to U-11: call state, caps through preflight, idle, isolation."""
+"""Call state, caps through preflight, idle expiry, session isolation."""
 
 import threading
 
@@ -47,7 +47,6 @@ def test_failed_exchange_leaves_conversation_but_bills(clock):
 
 
 def test_bill_cap_preflight_ends_call_and_sends_nothing(clock):
-    # U-6
     mgr, ended = make(clock)
     call, _ = mgr.open("s1", line="sonnet", cap_usd=0.05)
     exchange(mgr, "s1", cost=0.04)
@@ -72,7 +71,7 @@ def test_cap_reached_after_reply_ends_call(clock):
 
 
 def test_day_cap_across_two_calls(clock):
-    # U-7: preflight sees spend from an earlier call the same day.
+    # Preflight sees spend from an earlier call the same day.
     mgr, _ = make(clock)
     spent = {"today": 0.0}
     allowance = 0.05
@@ -113,7 +112,7 @@ def test_in_flight_reservations_count_against_others(clock):
 
 
 def test_turn_limit_via_preflight(clock):
-    # U-8: the manager counts exchanges; preflight compares with the limit.
+    # The manager counts exchanges; preflight compares with the limit.
     mgr, _ = make(clock)
     call, _ = mgr.open("s1", line="sonnet", cap_usd=5)
 
@@ -128,7 +127,6 @@ def test_turn_limit_via_preflight(clock):
 
 
 def test_idle_expiry(clock):
-    # U-9
     mgr, ended = make(clock)
     mgr.idle_timeout_s = 30 * 60
     call, _ = mgr.open("s1", line="sonnet", cap_usd=0.5)
@@ -155,7 +153,6 @@ def test_in_flight_call_does_not_idle_out(clock):
 
 
 def test_one_open_call_per_session(clock):
-    # U-10
     mgr, _ = make(clock)
     first, created1 = mgr.open("s1", line="sonnet", cap_usd=0.5)
     second, created2 = mgr.open("s1", line="sonnet", cap_usd=0.9)
@@ -172,7 +169,6 @@ def test_busy_while_in_flight(clock):
 
 
 def test_session_isolation(clock):
-    # U-11
     mgr, _ = make(clock)
     a, _ = mgr.open("session-A", line="sonnet", cap_usd=0.5)
     exchange(mgr, "session-A")

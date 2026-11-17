@@ -1,4 +1,4 @@
-"""U-16 to U-20 through the tool handlers, plus caps, billing and restarts."""
+"""The tool handlers: open, say, hangup, caps, billing and restarts."""
 
 import json
 
@@ -22,7 +22,6 @@ def open_(tools, question="Why does the build fail?", **kw):
 
 
 def test_open_returns_reply_and_bill(tools, fake_llm, runtime):
-    # U-18
     runtime.context.record_turn(
         SID,
         conversation_history=[
@@ -63,7 +62,6 @@ def test_no_transcript_is_noted(tools, fake_llm):
 
 
 def test_empty_reply_is_error_and_not_appended(tools, fake_llm, runtime):
-    # U-16 (tool side)
     fake_llm.script(reply("first"), reply("", input_tokens=50, output_tokens=4000))
     open_(tools)
     c = runtime.manager.get(SID)
@@ -75,7 +73,6 @@ def test_empty_reply_is_error_and_not_appended(tools, fake_llm, runtime):
 
 
 def test_advisor_exception_keeps_call_open(tools, fake_llm, runtime):
-    # U-17
     fake_llm.script(reply("first"), ConnectionError("connection refused"))
     open_(tools)
     out = call(tools, SAY, {"message": "next"})
@@ -104,7 +101,6 @@ def test_handlers_never_raise(tools, runtime):
 
 
 def test_hangup_makes_no_llm_call(tools, fake_llm):
-    # U-19
     fake_llm.script(reply())
     open_(tools)
     out = call(tools, HANGUP, {})
@@ -115,7 +111,6 @@ def test_hangup_makes_no_llm_call(tools, fake_llm):
 
 
 def test_missing_session_id(tools, fake_llm):
-    # U-20
     for name, args in (
         (OPEN, {"reason": "r", "question": "q"}),
         (SAY, {"message": "m"}),
@@ -211,7 +206,7 @@ def test_day_allowance_used_up(tools, fake_llm, config, runtime):
 
 
 def test_ledger_failure_fails_closed(tools, fake_llm, runtime):
-    # U-5 through the tool: cannot read spend -> no call.
+    # Cannot read spend -> no call.
     def broken():
         raise OSError("disk gone")
 

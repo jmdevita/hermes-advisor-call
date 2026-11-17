@@ -1,4 +1,4 @@
-"""U-1 settings merge and validation; part of U-37."""
+"""Settings: merge over defaults and validation."""
 
 import pytest
 
@@ -143,7 +143,7 @@ def test_invalid_model_value_falls_back():
 
 
 def test_cycle_start_day_required():
-    # U-37 (settings part): no default, and invalid values are rejected.
+    # No default, and invalid values are rejected.
     for raw in (None, 0, 32, "3", 3.0, True):
         s = parse_settings({"budget": {"cycle_start_day": raw}})
         assert s.budget.cycle_start_day is None

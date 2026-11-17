@@ -1,4 +1,4 @@
-"""U-13 to U-16 (layout, markers, empty replies) and the ask() contract."""
+"""The advisor request: layout, cache markers, empty replies, and the ask() contract."""
 
 import pytest
 from conftest import FakeLlm, reply
@@ -33,7 +33,6 @@ def markers(messages):
 
 
 def test_opening_layout_breakpoint_a():
-    # U-13
     req = build_request(conv(1), "5m")
     assert req.messages[0] == {"role": "system", "content": ADVISOR_SYSTEM}
     assert req.messages[1]["role"] == "user"
@@ -43,7 +42,6 @@ def test_opening_layout_breakpoint_a():
 
 
 def test_third_exchange_breakpoints_a_and_b_only():
-    # U-14
     req = build_request(conv(3), "5m")
     roles = [m["role"] for m in req.messages]
     assert roles == ["system", "user", "assistant", "user", "assistant", "user"]
@@ -59,7 +57,6 @@ def test_never_more_than_two_breakpoints(n):
 
 
 def test_cache_off_and_1h():
-    # U-15
     off = build_request(conv(3), "off")
     assert markers(off.messages) == []
     assert all(isinstance(m["content"], str) for m in off.messages)
@@ -90,7 +87,7 @@ def test_ask_passes_task_and_limits():
 
 
 def test_empty_reply_is_an_error_with_usage():
-    # U-16 (client side): empty text is a failure, but usage is kept for billing.
+    # Empty text is a failure, but usage is kept for billing.
     llm = FakeLlm().script(reply("   ", input_tokens=10, output_tokens=4000))
     with pytest.raises(AdvisorError) as err:
         ask(llm, LINE, SETTINGS, build_request(conv(1), "5m"))

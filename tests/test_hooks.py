@@ -1,4 +1,4 @@
-"""U-21 to U-27, U-29, U-36, U-37 (hook part): approval gate, capture,
+"""The hooks: approval gate, capture,
 grant notice, bill footer, session teardown."""
 
 import json
@@ -28,13 +28,11 @@ def gate(hooks, args=None, session_id=SID, tool=OPEN):
 
 
 def test_other_tools_pass(hooks):
-    # U-21
     for tool in ("terminal", "read_file", "advisor_call_hangup", "tool_call"):
         assert gate(hooks, tool=tool) is None
 
 
 def test_approve_directive_and_rule_key(hooks):
-    # U-22
     d = gate(hooks)
     assert d["action"] == "approve"
     assert d["rule_key"] == f"advisor_call:sonnet:{SID}"
@@ -48,7 +46,6 @@ def test_rule_key_differs_per_session(hooks):
 
 
 def test_blocks_when_budget_used_up(hooks, runtime, config):
-    # U-23 (day)
     config["budget"].update(per_day_usd=0.10)
     runtime.ledger.record_exchange(
         ts=0,
@@ -70,7 +67,6 @@ def test_blocks_when_budget_used_up(hooks, runtime, config):
 
 
 def test_blocks_when_cycle_budget_used_up(hooks, runtime, config):
-    # U-23 (cycle)
     config["budget"].update(per_month_usd=1.0)
     runtime.ledger.record_exchange(
         ts=0,
@@ -91,7 +87,6 @@ def test_blocks_when_cycle_budget_used_up(hooks, runtime, config):
 
 
 def test_grant_skips_prompt_and_revoke_restores_it(hooks, runtime):
-    # U-24
     runtime.manager.grant(SID, cap_usd=None)
     assert gate(hooks) is None
     runtime.manager.revoke(SID)
@@ -99,7 +94,6 @@ def test_grant_skips_prompt_and_revoke_restores_it(hooks, runtime):
 
 
 def test_blocks_sender_outside_allowed_list(hooks, runtime, config):
-    # U-25
     config["allowed_senders"] = ["111"]
     runtime.context.record_turn(
         SID, conversation_history=[], user_message="hi", sender_id="999", platform="telegram"
@@ -136,7 +130,6 @@ def test_unseen_session_is_blocked_when_senders_are_limited(hooks, config):
 
 
 def test_approvals_off_needs_grant(hooks, runtime, approvals):
-    # U-26
     approvals["mode"] = False  # YAML `off`
     d = gate(hooks)
     assert d["action"] == "block" and "/second-opinion allow" in d["message"]
@@ -151,7 +144,6 @@ def test_approvals_off_allowed_when_opted_out(hooks, approvals, config):
 
 
 def test_reason_sanitized(hooks):
-    # U-27
     rlo, zwsp = chr(0x202E), chr(0x200B)  # right-to-left override, zero-width space
     evil = "line one\nline two\x1b[31m" + rlo + "evil" + zwsp + "x" * 500
     d = gate(hooks, {"reason": evil, "question": "q"})
@@ -177,7 +169,6 @@ def test_missing_session_and_misconfig_block(hooks, config):
     config.pop("advisor")
     config["budget"].pop("cycle_start_day")
     d = gate(hooks)
-    # U-37 (hook part)
     assert d["action"] == "block" and "cycle_start_day" in d["message"]
 
 
@@ -202,7 +193,7 @@ def test_hook_bug_fails_closed(hooks, runtime):
 
 
 def test_cap_shown_matches_call_cap(hooks, tools, fake_llm):
-    # U-36: the cap on the approval prompt is the cap the call gets, and it
+    # The cap on the approval prompt is the cap the call gets, and it
     # does not change mid-call.
     shown = gate(hooks)["message"].split("bill cap $", 1)[1].split(",", 1)[0]
     fake_llm.script(reply(), reply())
@@ -245,7 +236,7 @@ def test_llm_request_capture_never_modifies(hooks, runtime):
     assert hooks.llm_request() is None
 
 
-# ------------------------------------------------------------------- footer (U-29)
+# ------------------------------------------------------------------- footer
 
 
 def test_footer_only_after_activity(hooks, tools, fake_llm):

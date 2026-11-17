@@ -1,4 +1,4 @@
-"""U-12 transcript rendering, plus capture."""
+"""Transcript rendering and capture."""
 
 from advisor_call.context import (
     OMITTED_PREFIX,

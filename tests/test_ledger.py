@@ -1,4 +1,4 @@
-"""U-4, U-5 and the cycle-exclusion part of U-33."""
+"""The ledger: writes, totals, read failures, cycle boundaries."""
 
 import datetime as dt
 import json

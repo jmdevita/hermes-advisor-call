@@ -1,4 +1,4 @@
-"""U-30: register() wires everything, and the root package imports like
+"""register() wires everything, and the root package imports like
 Hermes imports it."""
 
 import importlib.util

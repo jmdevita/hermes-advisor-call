@@ -1,4 +1,4 @@
-"""U-28 /second-opinion subcommands; U-37 (command part)."""
+"""/second-opinion subcommands."""
 
 from types import SimpleNamespace
 
@@ -31,7 +31,7 @@ def test_status(cmd):
 
 
 def test_status_without_cycle_day(cmd, config, fake_llm):
-    # U-37: /second-opinion status shows the setup message; allow and ask refuse.
+    # /second-opinion status shows the setup message; allow and ask refuse.
     config["budget"].pop("cycle_start_day")
     assert "cycle_start_day" in run(cmd)
     assert "cycle_start_day" in run(cmd, "allow")

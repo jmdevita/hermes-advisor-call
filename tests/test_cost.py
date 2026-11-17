@@ -1,4 +1,4 @@
-"""U-2, U-3, U-31 to U-35, U-38: cost, estimates, cycle, allowance, caps."""
+"""Cost, estimates, the billing cycle and the caps."""
 
 import datetime as dt
 
@@ -27,7 +27,7 @@ def budget(**kw):
     return parse_settings({"budget": {"cycle_start_day": 1, **kw}}).budget
 
 
-# ------------------------------------------------------------------- U-2 / U-3
+# ------------------------------------------------------------------- cost
 
 
 def test_exact_cost_hand_computed():
@@ -170,7 +170,7 @@ def test_worked_example_ten_messages():
 @pytest.mark.parametrize("prompt_est,out", [(13_000, 4000), (400, 50), (30_000, 2500)])
 @pytest.mark.parametrize("reused_frac", [0.0, 0.8])
 def test_estimate_is_at_least_billed(caching, prompt_est, out, reused_frac):
-    # U-3: for text the estimator does not underestimate, the pre-flight
+    # For text the estimator does not underestimate, the pre-flight
     # estimate is at least what the exchange is billed.
     reused = prompt_est * reused_frac
     est = estimate_cost(prompt_est, 4000, SONNET, caching=caching, reused_est=reused)
@@ -181,7 +181,7 @@ def test_estimate_is_at_least_billed(caching, prompt_est, out, reused_frac):
     assert est >= billed - 1e-12
 
 
-# ------------------------------------------------------------------- cycle (U-33, U-38)
+# ------------------------------------------------------------------- cycle
 
 
 def test_cycle_start_3_on_nov_14():
@@ -218,7 +218,7 @@ def test_cycle_across_year_end():
     assert (c.start, c.end) == (D(2026, 12, 15), D(2027, 1, 14))
 
 
-# ------------------------------------------------------------------- caps (U-31, U-32, U-35)
+# ------------------------------------------------------------------- caps
 
 # A 30-day cycle: start day 1 in November (Nov 1 to Nov 30).
 NOV1 = D(2026, 11, 1)
