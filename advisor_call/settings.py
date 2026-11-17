@@ -12,7 +12,7 @@ import copy
 import logging
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -54,6 +54,7 @@ DEFAULTS: dict[str, Any] = {
     },
     "advisor": {
         "model": DEFAULT_MODEL,
+        "effort": None,  # None: the model's own default
         "prices_per_mtok": {},
         "max_tokens": 4000,
         "timeout_seconds": 180,
@@ -67,6 +68,10 @@ DEFAULTS: dict[str, Any] = {
 
 # Below this, thinking can use the whole reply limit (seen live, DESIGN.md 7).
 MIN_USEFUL_MAX_TOKENS = 1024
+
+# Effort levels for advisor.effort. Hermes sends them to Anthropic unchanged,
+# as output_config.effort; Sonnet 5.5 and Opus 5.5 accept all five.
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 PRICE_KEYS = ("input", "output", "cache_read")  # cache_write: optional, derived
 CACHE_TTLS = ("5m", "1h", "off")
@@ -95,6 +100,7 @@ class Line:
     prices: Prices | None  # None when misconfigured
     problem: str = ""  # why the line cannot be used; "" when usable
     max_tokens: int = 4000  # effective reply limit for this line
+    effort: str = ""  # effective effort; "" leaves it to the model's default
 
     @property
     def usable(self) -> bool:
@@ -239,6 +245,18 @@ def resolve_model(ref: str) -> tuple[str, str]:
     return re.sub(r"[^a-z0-9_]", "_", low), ref.strip()
 
 
+def _effort(raw: Any, w: _Collector) -> str:
+    if raw is None or raw == "":
+        return ""
+    if isinstance(raw, str) and raw.strip().lower() in EFFORTS:
+        return raw.strip().lower()
+    w.warn(
+        f"advisor.effort must be one of {', '.join(EFFORTS)}; got {raw!r}, "
+        "using the model's default"
+    )
+    return ""
+
+
 def _price_value(v: Any, key: str) -> float | None:
     if not (isinstance(v, int | float) and not isinstance(v, bool) and math.isfinite(v)):
         return None
@@ -284,7 +302,8 @@ def _model_line(ref: str, overrides: dict[str, Any], cache_ttl: str, w: _Collect
 def _apply_auxiliary(line: Line, auxiliary: Any, max_tokens: int, w: _Collector) -> Line:
     """Apply Hermes' ``auxiliary.<task>`` slot to a line.
 
-    - The slot's model and provider win over the line's defaults.
+    - The slot's model, provider and ``reasoning_effort`` win over the
+      line's defaults.
     - The plugin caps reply length through the slot's ``extra_body.max_tokens``
       (DESIGN.md, O-3b). A user ``extra_body`` *replaces* the plugin's instead
       of merging with it, so a user ``extra_body`` without ``max_tokens``
@@ -292,12 +311,16 @@ def _apply_auxiliary(line: Line, auxiliary: Any, max_tokens: int, w: _Collector)
       ``max_tokens`` there becomes the line's reply limit.
     """
     provider, model, limit, problem = line.provider, line.model, max_tokens, line.problem
+    effort = line.effort
     slot = auxiliary.get(line.task_key) if isinstance(auxiliary, dict) else None
     if isinstance(slot, dict):
         if isinstance(slot.get("provider"), str) and slot["provider"]:
             provider = slot["provider"]
         if isinstance(slot.get("model"), str) and slot["model"]:
             model = slot["model"]
+        slot_effort = slot.get("reasoning_effort")
+        if isinstance(slot_effort, str) and slot_effort.strip():
+            effort = slot_effort.strip().lower()
         extra = slot.get("extra_body")
         if isinstance(extra, dict) and extra:
             user_limit = extra.get("max_tokens")
@@ -316,6 +339,7 @@ def _apply_auxiliary(line: Line, auxiliary: Any, max_tokens: int, w: _Collector)
         prices=line.prices,
         problem=problem,
         max_tokens=limit,
+        effort=effort,
     )
 
 
@@ -361,7 +385,9 @@ def parse_settings(raw: Any, auxiliary: Any = None, approvals: Any = None) -> Se
         model_ref = ad["model"]
     if adv.get("also_allow"):
         w.warn("advisor.also_allow is no longer used; there is one advisor model, advisor.model")
-    advisor = _model_line(model_ref, overrides, cache_ttl, w)
+    advisor = replace(
+        _model_line(model_ref, overrides, cache_ttl, w), effort=_effort(adv.get("effort"), w)
+    )
 
     b = _section(raw, "budget", w)
     bd = DEFAULTS["budget"]

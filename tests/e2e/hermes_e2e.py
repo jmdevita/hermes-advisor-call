@@ -3,7 +3,7 @@
 Real Hermes loads this plugin; a local fake Anthropic server records what
 Hermes sends and answers in Anthropic's streaming format. Checks the approval
 directive, a full open / say / hangup through Hermes' own tool dispatch, the
-cache markers and max_tokens on the wire, and that the bill is flagged as an
+cache markers, max_tokens and effort on the wire, and that the bill is flagged as an
 estimate (Hermes drops cache counts). Run it with scripts/hermes-e2e.sh (not collected by pytest).
 
 TEST ONLY: Hermes refuses advisor hosts that are not Anthropic-compatible,
@@ -19,6 +19,7 @@ from pathlib import Path
 PORT = int(sys.argv[1])
 ALIAS = sys.argv[2] if len(sys.argv) > 2 else "sonnet"
 MODEL_ID = {"sonnet": "claude-sonnet-5-5", "opus": "claude-opus-5-5"}[ALIAS]
+EFFORT = sys.argv[3] if len(sys.argv) > 3 else ""  # advisor.effort; "" when unset
 SEEN: list[dict] = []
 REPLIES = iter(["First advice: check the lockfile.", "Second advice: pin the version."])
 
@@ -142,6 +143,12 @@ def main() -> int:
             "max_tokens on the wire",
             first.get("max_tokens") == 4000 == second.get("max_tokens"),
             f"{first.get('max_tokens')}, {second.get('max_tokens')}",
+        )
+        efforts = [(b.get("output_config") or {}).get("effort") for b in (first, second)]
+        check(
+            f"effort on the wire ({EFFORT or 'unset: none sent'})",
+            efforts == [EFFORT or None] * 2,
+            str(efforts),
         )
         check("breakpoint A only on the opening", markers(first) == [0], str(markers(first)))
         check(

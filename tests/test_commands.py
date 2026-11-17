@@ -33,6 +33,11 @@ def test_status(cmd):
     assert run(cmd, "status") == out
 
 
+def test_status_shows_the_effort(cmd, config):
+    config["advisor"] = {"model": "opus", "effort": "medium"}
+    assert "Advisor: opus (claude-opus-5-5, effort medium)" in run(cmd)
+
+
 def test_status_without_cycle_day(cmd, config, fake_llm):
     # /second-opinion status shows the setup message; allow and ask refuse.
     config["budget"].pop("cycle_start_day")

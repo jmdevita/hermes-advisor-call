@@ -65,6 +65,19 @@ def test_one_aux_task_for_the_advisor(tmp_path, clock):
     assert ctx.auxiliary_tasks["advisor_call_opus"]["defaults"]["model"] == "claude-opus-5-5"
 
 
+def test_effort_goes_into_the_aux_task(tmp_path, clock):
+    ctx = FakeCtx()
+    _register(
+        ctx,
+        tmp_path,
+        clock,
+        {"budget": {"cycle_start_day": 3}, "advisor": {"model": "opus", "effort": "medium"}},
+    )
+    defaults = ctx.auxiliary_tasks["advisor_call_opus"]["defaults"]
+    assert defaults["reasoning_effort"] == "medium"
+    assert defaults["extra_body"] == {"max_tokens": 4000}  # effort is not in extra_body
+
+
 def test_register_does_not_touch_llm(tmp_path, clock):
     class NoLlm(FakeCtx):
         @property
