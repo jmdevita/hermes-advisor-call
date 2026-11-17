@@ -223,7 +223,11 @@ class SecondOpinionCommand:
                 f"The executor has a call open ({existing.call_id}). /{COMMAND} hangup "
                 "first, then ask."
             )
-        framed = f"(This message is from the user, asking you directly.)\n{question}"
+        framed = (
+            "(This message is from the user, asking you directly. Answer the user. "
+            "This is a single question, not a call: do not mention hanging up.)\n"
+            f"{question}"
+        )
         result = open_call(self.rt, {"question": framed}, session_id, initiated_by="user")
         call = self.rt.manager.latest(session_id)
         if call is not None and call.initiated_by != "user":

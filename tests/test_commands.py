@@ -72,6 +72,7 @@ def test_ask(cmd, runtime, fake_llm):
     assert "ended (hung up), 1 message," in run(cmd, "status")  # not "1 messages"
     sent = fake_llm.calls[0].messages[1]["content"][0]["text"]
     assert "from the user" in sent and "context here" in sent
+    assert "do not mention hanging up" in sent  # a direct ask has no call to hang up
     assert runtime.manager.latest(SID).initiated_by == "user"
     assert not runtime.manager.take_activity(SID)  # no executor footer for it
     assert runtime.ledger.day_total(runtime.today()) > 0  # counts toward the budget
