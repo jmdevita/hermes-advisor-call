@@ -25,7 +25,7 @@ from .ledger import LedgerError
 from .prompts import for_platform
 from .runtime import Runtime
 from .settings import Settings
-from .suggest import ADVISOR_TOOL_PREFIX, BRIDGE_TOOLS, UNATTENDED_PLATFORMS, annotate
+from .suggest import UNATTENDED_PLATFORMS, hermes_warning
 from .tools import OPEN, SAY
 
 log = logging.getLogger(__name__)
@@ -213,7 +213,7 @@ class Hooks:
         **_: Any,
     ) -> dict[str, str] | None:
         try:
-            self.rt.tracker.new_turn(session_id)  # the user spoke: auto-suggest counts afresh
+            self.rt.tracker.new_turn(session_id)  # the user spoke: a new turn for auto-suggest
             self.rt.context.record_turn(
                 session_id,
                 conversation_history=conversation_history,
@@ -244,9 +244,33 @@ class Hooks:
         try:
             if isinstance(request, dict):
                 self.rt.context.record_request(session_id, request.get("messages"))
+                self._watch_for_loop_warning(session_id, request.get("messages"))
         except Exception:  # noqa: BLE001 - fail open, never touch the request
             log.debug("advisor-call: llm_request capture failed", exc_info=True)
         return None
+
+    def _watch_for_loop_warning(self, session_id: Any, messages: Any) -> None:
+        """Auto-suggest (suggest.py): note when Hermes flagged a tool loop."""
+        if not isinstance(session_id, str) or not session_id:
+            return
+        settings = self.rt.settings()
+        if not settings.suggest:
+            return
+        kind = hermes_warning(messages)
+        if kind is None:
+            return
+        identity = self.rt.context.identity(session_id)
+        unattended = bool(identity) and identity[1].lower() in UNATTENDED_PLATFORMS
+        if not self.rt.tracker.flagged(
+            session_id, lambda: self._suggestion_possible(settings, session_id, unattended)
+        ):
+            return
+        try:
+            self.rt.ledger.record_suggestion(
+                ts=self.rt.clock.time(), day=self.rt.today(), session_id=session_id, kind=kind
+            )
+        except LedgerError as exc:
+            log.warning("advisor-call: could not record a suggestion: %s", exc)
 
     # ----------------------------------------------------------------- footer
 
@@ -264,12 +288,12 @@ class Hooks:
                 call = self.rt.manager.latest(session_id)
                 if call is not None:
                     lines.append(self.footer(call, settings))
-            if notice and settings.suggest.tells_user:
+            if notice and settings.suggest:
                 lines.append(
                     for_platform(
-                        f"💡 The agent looked stuck ({notice}) and didn't call the advisor. "
-                        "You can ask it yourself with /second-opinion ask <question>, or allow "
-                        "calls for this session with /second-opinion allow.",
+                        "💡 Hermes flagged a tool loop this turn and the agent didn't call "
+                        "the advisor. You can ask it yourself with /second-opinion ask "
+                        "<question>, or allow calls for this session with /second-opinion allow.",
                         platform,
                     )
                 )
@@ -278,70 +302,6 @@ class Hooks:
             return response_text.rstrip() + "\n\n" + "\n".join(lines)
         except Exception:  # noqa: BLE001
             log.exception("advisor-call: bill footer failed")
-            return None
-
-    # ----------------------------------------------------------------- auto-suggest
-
-    def transform_tool_result(
-        self,
-        tool_name: Any = None,
-        args: Any = None,
-        result: Any = None,
-        session_id: Any = None,
-        status: Any = None,
-        error_message: Any = None,
-        api_request_id: Any = None,
-        **_: Any,
-    ) -> str | None:
-        """Watch tool results for signs of being stuck (suggest.py). Appends a
-        one-line hint to the result that tripped a rule; never blocks."""
-        try:
-            if not isinstance(session_id, str) or not session_id or not isinstance(result, str):
-                return None
-            name = str(tool_name or "")
-            settings = self.rt.settings()
-            sg = settings.suggest
-            if (
-                sg.mode == "off"
-                or not name
-                or name.startswith(ADVISOR_TOOL_PREFIX)
-                or name in BRIDGE_TOOLS
-                or name in sg.ignore_tools
-            ):
-                return None
-            identity = self.rt.context.identity(session_id)
-            unattended = bool(identity) and identity[1].lower() in UNATTENDED_PLATFORMS
-
-            def allowed() -> bool:
-                return self._suggestion_possible(settings, session_id, unattended)
-
-            detection = self.rt.tracker.observe(
-                session_id,
-                sg,
-                tool_name=name,
-                args=args,
-                result=result,
-                failed=status == "error",
-                error_message=str(error_message or ""),
-                batch=str(api_request_id or ""),
-                allowed=allowed,
-            )
-            if detection is None:
-                return None
-            try:
-                self.rt.ledger.record_suggestion(
-                    ts=self.rt.clock.time(),
-                    day=self.rt.today(),
-                    session_id=session_id,
-                    kind=detection.kind,
-                )
-            except LedgerError as exc:
-                log.warning("advisor-call: could not record a suggestion: %s", exc)
-            if not sg.nudges_executor:
-                return None
-            return annotate(result, detection.reason)
-        except Exception:  # noqa: BLE001 - fail open: never disturb a tool result on a bug
-            log.exception("advisor-call: auto-suggest failed")
             return None
 
     def _suggestion_possible(self, settings: Settings, session_id: str, unattended: bool) -> bool:

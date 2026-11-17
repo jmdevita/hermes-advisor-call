@@ -136,15 +136,7 @@ plugins:
         max_tokens: 4000            # reply limit per message
         timeout_seconds: 180
         cache_ttl: 5m               # 5m | 1h | off
-      suggest:                      # auto-suggest, see below
-        mode: both                  # off | executor | user | both
-        error_streak: 3             # 0 turns a rule off
-        same_error: 3
-        loop: 3
-        cycles: true
-        cooldown_calls: 10
-        max_per_session: 3
-        ignore_tools: []
+      suggest: true                 # auto-suggest, see below
       allowed_senders: []           # gateway user IDs allowed to spend; [] = anyone the gateway admits
       bill_footer: true
       log_transcripts: false
@@ -259,40 +251,29 @@ another plugin, it is registered as `/advisorcall` instead.
 
 ## Auto-suggest
 
-Small models often don't notice they are stuck. The plugin watches tool
-results and, when the executor looks stuck, suggests a second opinion. It
-never calls the advisor itself and never blocks a tool: approval and the
-caps work exactly as before. Detection is plain counting, with no model
-calls, so it costs nothing.
+Small models often don't notice they are stuck. Hermes already watches for
+that: when the executor repeats a failing or identical tool call, Hermes
+adds a loop warning to the tool result. The plugin does no detection of its
+own and never touches a tool result. It only adds what Hermes doesn't do:
 
-It looks for, per session (counters reset when you send a new message and
-after an advisor call):
+- **You get a line** at the end of the reply when Hermes flagged a loop in
+  that turn and the executor did not call the advisor:
+  `💡 Hermes flagged a tool loop this turn and the agent didn't call the advisor.`
+  with how to ask yourself or allow calls for the session.
+- **The executor is told once**, in its standing guidance, that a loop
+  warning it cannot resolve is a good moment to call.
 
-- **3 failed tool calls in a row**;
-- **the same error 3 times** in a turn, even with other calls between
-  (numbers, ids and spacing are ignored when comparing errors);
-- **the same tool, arguments and result 3 times in a row** (a repeated call
-  whose result changes, such as polling a build, does not count);
-- **a repeating cycle** of 2 to 5 calls with the same results, seen twice.
+It never calls the advisor itself: approval and the caps work exactly as
+before, and it costs nothing. You get the line at most once per turn and 3
+times per session, and only when a call could actually happen (no call
+open, budget left, setup complete; in unattended sessions such as cron,
+only after `/second-opinion allow`). `/second-opinion status` shows how
+many loop warnings were seen in the last 7 days and how many led to a call.
 
-Identical calls from one model response count once.
-
-When a rule trips:
-
-- **The executor gets a note** on that tool result, saying what happened and
-  that it can get a second opinion or ask you. It decides what to do.
-- **You get a line** at the end of the reply, but only if the executor did
-  not call: `💡 The agent looked stuck (…) and didn't call the advisor.`
-
-It suggests at most once per 10 tool calls and 3 times per session, and only
-when a call could actually happen (no call open, budget left, setup
-complete; in unattended sessions such as cron, only after
-`/second-opinion allow`). `/second-opinion status` shows how many
-suggestions were made in the last 7 days and how many led to a call.
-
-Settings (`suggest:`): `mode` is `both` (default), `executor` (note only),
-`user` (your line only) or `off`. The thresholds can be raised, or set to 0
-to turn a rule off. List tools that legitimately repeat in `ignore_tools`.
+When a loop is flagged is Hermes' decision, set in Hermes' own
+`tool_loop_guardrails` settings; if you turn those warnings off, this goes
+quiet too. If Hermes stops the turn outright (its hard stop), there is no
+line. Turn the line off with `suggest: false`.
 
 ## Billing
 
@@ -353,8 +334,8 @@ have been processed and billed anyway.
 - **The bill is an estimate while caching is on** (see Billing).
 - **Calls do not survive a gateway restart.** The next message gets "call
   dropped (gateway restarted); open a new call". The ledger is kept.
-- **The executor decides when to call.** Auto-suggest nudges it when it
-  looks stuck, but never calls on its own.
+- **The executor decides when to call.** Auto-suggest tells you when
+  Hermes flags a loop, but never calls on its own.
   A small model may call too rarely or too often.
 - Subagents (`delegate_task` children) are not specially supported; the
   normal approval rule applies to them.

@@ -52,7 +52,7 @@ class Runtime:
         self._redactor_factory = redactor
         self._redactor: Redactor | None = None
         self.manager = CallManager(clock=self.clock.time, on_call_end=self.persist_call)
-        self.tracker = Tracker()  # auto-suggest counters
+        self.tracker = Tracker()  # auto-suggest flags
         self._lock = threading.Lock()
         # One-shot authorizations left by the approval hook, per session.
         self._authorizations: OrderedDict[str, tuple[str, float]] = OrderedDict()

@@ -425,43 +425,47 @@ with a warning. The tool's argument is now `model` (`line` still accepted).
 
 ### 2.8 Auto-suggest (v0.2)
 
-Small executors often do not notice they are stuck, so the plugin watches
-tool results and suggests a second opinion. It never calls the advisor and
-never blocks a tool. Code: `suggest.py`; hook: `transform_tool_result`.
+Small executors often do not notice they are stuck. **Hermes already
+detects that** (`agent/tool_guardrails.py`, on by default): it appends
+`[Tool loop warning: <code>; count=N; ...]` or a `[hermes note: ...]` to
+the tool result on repeated failures, identical calls and repeating cycles.
+So the plugin does no detection and never changes a tool result. Code:
+`suggest.py`.
 
-**Detection is deterministic** (counters over tool results, no model
-calls), per session, reset on each new user message and after an advisor
-call: an error streak (3), the same normalised error (3 in a turn, other
-calls between allowed), a loop (same tool, arguments and **result**, 3 in a
-row), and a cycle of 2 to 5 calls repeating twice with the same results.
-Identical calls from one model response (same `api_request_id`) count once.
+- The `llm_request` middleware (already used to capture the transcript)
+  reads the newest tool results of each executor request, those after the
+  last assistant message, for Hermes' warning at the end of a result.
+- If the turn ends without an advisor call, `transform_llm_output` adds one
+  line for the user. At most once per turn and 3 per session; only when a
+  call could happen (no open call, budget left, setup complete, and in
+  unattended `cron` sessions only with a grant).
+- The executor's standing guidance has one sentence: a loop warning that
+  diagnosing does not resolve is a good moment to call.
+- Warnings seen and whether a call followed are recorded (`suggestions`
+  table) and shown in `status`.
 
-**Response:** a factual note on the tool result that tripped the rule (an
-`advisor_call_note` field when the result is a JSON object, so it stays
-valid JSON; a final line otherwise), offering the advisor or asking the
-user; and, in `both`/`user` mode, a line to the user at the end of the turn
-if the executor did not call. At most once per 10 tool calls and 3 per
-session; only when a call could happen (no open call, budget left, setup
-complete, and in unattended `cron` sessions only with a grant). A refused
-suggestion does not start the cooldown. Suggestions and whether they led to
-a call are recorded (`suggestions` table) and shown in `status`.
+**Why not our own detector.** A first version on `beta` (never released)
+counted errors and repeated calls itself and appended a note to the tool
+result. It duplicated Hermes' guardrails with different thresholds, put a
+second and partly conflicting note on the same result, and gave a false
+alarm on normal terminal work: Hermes labels every failed command
+"exit N", so three unrelated non-zero exits in a turn looked like the same
+error three times. Following Hermes' warning removes all three problems and
+means Hermes' `tool_loop_guardrails` settings govern both.
 
-**Research behind it** (2026-11-15). The pattern matches established
-practice: OpenRouter's Agent SDK (a configurable observe / steer / escalate
-/ block / stop ladder, where "escalate" can force an advisor consult),
-smolagents' `ml-intern` (fingerprints of tool, normalised arguments and
-result; 3 identical or a repeating cycle; injects a corrective message),
-Cline and Roo Code (pause and ask the user after 3 consecutive mistakes),
-and OpenHands (stuck detector; an open issue reports false positives on
-legitimate polling with fixed thresholds). Anthropic's advisor-tool
-documentation reports that a client-side nudge to consult raised pass rates
-by about 7 points for a small executor (Haiku), had no effect for Sonnet
-and slightly lowered them for Opus, which suggests the feature matters most
-with a small local executor. Taken from that research: loops require the
-same result (polling is not a loop), cycle detection, argument
-normalisation, per-tool exemptions, and one count per batch. Deliberately
-different: a cooldown and a per-session limit (some implementations fire on
-every step), and never blocking or stopping.
+**Known limits.** The warning is read from the *next* request, so a turn
+that Hermes halts outright (hard stop) gets no line. The middleware does not
+run in `safe_worker` mode, so there is no line there either. The wording of
+Hermes' notes is matched by prefix; `scripts/hermes-e2e.sh` produces real
+warnings with Hermes' own guardrail controller and fails if they are no
+longer recognised, so run it against each new Hermes release.
+
+**Research** (2026-11-15): OpenRouter's Agent SDK, smolagents' `ml-intern`,
+Cline, Roo Code and OpenHands all use the same kind of counting that Hermes
+has built in. Anthropic's advisor-tool documentation reports that a nudge to
+consult raised pass rates by about 7 points for a small executor (Haiku),
+had no effect for Sonnet and slightly lowered them for Opus, so this matters
+most with a small local executor.
 
 ### 2.9 The first request is always kept (v0.2)
 

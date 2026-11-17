@@ -1,5 +1,5 @@
 name: advisor-call
-version: 0.1.0
+version: 0.2.0
 description: >
   Let a cheap or local main model get a second opinion from a stronger
   advisor model, as a multi-message consult with human approval per call and
@@ -16,7 +16,6 @@ provides_hooks:
   - pre_tool_call
   - pre_llm_call
   - transform_llm_output
-  - transform_tool_result
   - on_session_finalize
 # Not a known manifest field in v0.23.1 (the loader logs it as ignored), but
 # `hermes plugins validate` compares it with what register() adds.

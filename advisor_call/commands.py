@@ -159,7 +159,7 @@ class SecondOpinionCommand:
                 out.append(f"Per-call cap today: {money(cap)}")
             except (ValueError, LedgerError):
                 pass
-        if settings.suggest.mode != "off":
+        if settings.suggest:
             try:
                 today = self.rt.today()
                 made, followed = self.rt.ledger.suggestion_stats(
@@ -167,7 +167,7 @@ class SecondOpinionCommand:
                 )
                 if made:
                     out.append(
-                        f"Auto-suggest, last 7 days: {plural(made, 'suggestion')}, "
+                        f"Auto-suggest, last 7 days: {plural(made, 'loop warning')}, "
                         f"{followed} led to a call"
                     )
             except LedgerError:

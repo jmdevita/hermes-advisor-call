@@ -49,6 +49,8 @@ You can get a second opinion from a stronger advisor model with the tool \
 `tool_search` (query: "advisor_call") and call it through `tool_call`. Use it only for hard \
 problems: you are stuck after real attempts, the same failure has repeated, \
 a decision is costly to reverse, or the user asked for a second opinion. \
+If you get a tool loop warning and diagnosing as it says does not fix the \
+problem, that is a good moment to call. \
 Before calling, tell the user in one sentence why. The user must approve. \
 The advisor has no tools and sees only a transcript plus what you send, so \
 include exact errors and code. Ask specific questions, do the work yourself \

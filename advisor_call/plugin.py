@@ -20,7 +20,6 @@ HOOKS = (
     "pre_tool_call",
     "pre_llm_call",
     "transform_llm_output",
-    "transform_tool_result",
     "on_session_finalize",
 )
 

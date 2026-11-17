@@ -14,6 +14,7 @@ import json
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
 PORT = int(sys.argv[1])
 ALIAS = sys.argv[2] if len(sys.argv) > 2 else "sonnet"
@@ -146,27 +147,38 @@ def main() -> int:
         check(
             "breakpoints A and B on the follow-up", markers(second) == [0, 1], str(markers(second))
         )
-    # Auto-suggest: three failing built-in tool calls through Hermes' dispatcher.
-    tries = []
-    for n, path in enumerate(("/nonexistent/a.txt", "/nonexistent/b.txt", "/nonexistent/c.txt")):
-        tries.append(
-            model_tools.handle_function_call(
-                "read_file",
-                {"path": path},
-                task_id="t",
-                session_id="sess-stuck",
-                api_request_id=f"req-{n}",
-            )
-        )
-    try:
-        third = json.loads(tries[2])
-    except ValueError:
-        third = {}
+    # Auto-suggest reads Hermes' own loop warnings: make real ones with Hermes'
+    # guardrail controller and check the plugin still recognises their wording.
+    from agent.tool_guardrails import ToolCallGuardrailController, append_toolguard_guidance
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # the repo root
+    from advisor_call.suggest import hermes_warning
+
+    def as_request(result):
+        return [{"role": "assistant", "content": ""}, {"role": "tool", "content": result}]
+
+    guard, failing, warned = ToolCallGuardrailController(), '{"exit_code": 1, "output": "boom"}', ""
+    for n in range(4):
+        decision = guard.after_call("terminal", {"command": f"make try{n}"}, failing, failed=True)
+        if decision.action == "warn":
+            warned = append_toolguard_guidance(failing, decision)
+            break
     check(
-        "auto-suggest note on the 3rd failing tool call (result still JSON)",
-        "advisor_call_open" in str(third.get("advisor_call_note", ""))
-        and "advisor_call_note" not in tries[1],
-        tries[2][-200:],
+        "Hermes' repeated-failure warning is recognised",
+        bool(warned) and hermes_warning(as_request(warned)) == decision.code,
+        warned[-160:] or "Hermes gave no warning after 4 failing calls",
+    )
+    guard, notice = ToolCallGuardrailController(), None
+    for n in range(4):
+        notice = guard.observe_call(
+            "read_file", {"path": "a"}, "same", tool_call_id=f"c{n}", failed=False
+        ).notice
+        if notice:
+            break
+    check(
+        "Hermes' identical-call note is recognised",
+        bool(notice) and hermes_warning(as_request("same\n\n" + notice)) == "identical_call",
+        str(notice)[:160],
     )
     bill = said.get("bill", {})
     check(

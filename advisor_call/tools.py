@@ -502,7 +502,7 @@ def open_call(
     rt.persist_call(call)  # an open row lets a restart be told apart from a wrong id
     if initiated_by == "executor" and rt.tracker.advisor_called(session_id):
         try:
-            rt.ledger.mark_suggestion_followed(session_id)  # the auto-suggest hint worked
+            rt.ledger.mark_suggestion_followed(session_id)  # a call followed Hermes' loop warning
         except LedgerError as exc:
             log.warning("advisor-call: could not record a followed suggestion: %s", exc)
 
