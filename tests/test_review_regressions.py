@@ -40,7 +40,7 @@ def j(text):
 def test_dense_text_does_not_overshoot_the_cap(tmp_path, clock):
     # Finding 1: 30,000 CJK characters cost more than chars/3 suggests.
     cfg = {
-        "budget": {"cycle_start_day": 1, "pacing": "fixed", "per_call_usd": 0.05},
+        "budget": {"cycle_start_day": 1, "per_call_usd": 0.05},
         "advisor": {"cache_ttl": "off", "max_tokens": 1000},
     }
     rt, llm, tools = make(tmp_path, clock, cfg)
@@ -67,7 +67,7 @@ def test_measured_density_raises_the_next_estimate(tmp_path, clock):
     # Cap $0.20: the opening is estimated at ~$0.045 but billed $0.12. Unscaled,
     # the next message (~$0.045) would still fit; scaled 3x (~$0.125) it does not.
     cfg = {
-        "budget": {"cycle_start_day": 1, "pacing": "fixed", "per_call_usd": 0.20},
+        "budget": {"cycle_start_day": 1, "per_call_usd": 0.20},
         "advisor": {"cache_ttl": "off", "max_tokens": 500},
     }
     rt, llm, tools = make(tmp_path, clock, cfg)
@@ -100,7 +100,6 @@ def test_concurrent_sessions_cannot_exceed_the_allowance(tmp_path, clock):
     cfg = {
         "budget": {
             "cycle_start_day": 1,
-            "pacing": "fixed",
             "per_day_usd": 0.10,
             "per_call_usd": 0.10,
         },
@@ -133,7 +132,6 @@ def test_failed_ledger_writes_still_count(tmp_path, clock):
     cfg = {
         "budget": {
             "cycle_start_day": 1,
-            "pacing": "fixed",
             "per_day_usd": 0.10,
             "per_call_usd": 0.10,
         },

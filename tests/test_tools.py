@@ -135,21 +135,28 @@ def test_cycle_day_unset_refuses(tools, fake_llm, config):
     assert "cycle_start_day" in out["error"] and fake_llm.calls == []
 
 
-def test_model_not_allowed(tools, fake_llm):
-    out = open_(tools, model="opus")
-    assert "not available" in out["error"] and "Allowed: sonnet" in out["error"]
+def test_unusable_model_is_refused(tools, fake_llm, config):
+    config["advisor"] = {"model": "claude-mystery-9"}  # no prices
+    out = open_(tools)
+    assert "cannot be used" in out["error"] and "prices_per_mtok" in out["error"]
     assert fake_llm.calls == []
 
 
+def test_executor_cannot_choose_the_model(tools, fake_llm):
+    fake_llm.script(reply())
+    out = open_(tools, model="opus")  # ignored: the advisor is set in config
+    assert out["line"] == "sonnet" and fake_llm.calls[0].kwargs["task"] == "advisor_call_sonnet"
+
+
 def test_tiny_cap_ends_before_sending(tools, fake_llm, config):
-    config["budget"].update(per_call_usd=0.001, pacing="fixed")
+    config["budget"].update(per_call_usd=0.001)
     out = open_(tools)
     assert out["status"] == "ended" and out["end_reason"] == "bill_cap"
     assert fake_llm.calls == []
 
 
 def test_cap_reached_after_reply(tools, fake_llm, config):
-    config["budget"].update(per_call_usd=0.10, pacing="fixed")
+    config["budget"].update(per_call_usd=0.10)
     config["advisor"] = {"max_tokens": 100, "cache_ttl": "off"}
     fake_llm.script(reply("big", input_tokens=20_000, output_tokens=7_000))
     out = open_(tools)
@@ -184,7 +191,7 @@ def test_ledger_rows_and_estimate_flag(tools, fake_llm, db_path):
 
 
 def test_day_allowance_used_up(tools, fake_llm, config, runtime):
-    config["budget"].update(pacing="fixed", per_day_usd=0.05)
+    config["budget"].update(per_day_usd=0.05)
     runtime.ledger.record_exchange(
         ts=0,
         day=runtime_today(),
@@ -214,7 +221,7 @@ def test_ledger_failure_fails_closed(tools, fake_llm, runtime):
 
 
 def test_custom_cap_from_grant(tools, fake_llm, runtime):
-    runtime.manager.grant(SID, line="sonnet", cap_usd=0.2)
+    runtime.manager.grant(SID, cap_usd=0.2)
     fake_llm.script(reply())
     out = open_(tools)
     assert out["bill"]["cap_usd"] == pytest.approx(0.2)

@@ -23,9 +23,9 @@ def run(cmd, args="", session_id=SID, source=None):
 def test_status(cmd):
     out = run(cmd)
     assert "Advisor: sonnet (claude-sonnet-5-5)" in out
-    assert "Today: $0.00 of $" in out and "budget left $100.00 / 19 days" in out
+    assert "Today: $0.00 of $3.00" in out and "This cycle: $0.00 of $100.00" in out
     assert "Cycle: Nov 3 to Dec 2 (19 days left)" in out
-    assert "Per-call cap today: $0.79" in out
+    assert "Per-call cap: $0.50" in out
     assert "not pre-authorized" in out
     assert run(cmd, "status") == out
 
@@ -40,19 +40,19 @@ def test_status_without_cycle_day(cmd, config, fake_llm):
 
 
 def test_allow_with_custom_cap_clamped(cmd, runtime, config):
-    config["budget"].update(pacing="fixed", per_day_usd=0.30)
+    config["budget"].update(per_day_usd=0.30)
     out = run(cmd, "allow $5")
     assert "pre-authorized" in out and "cap $0.30" in out  # clamped to today's remainder
     assert runtime.manager.grant_for(SID).cap_usd == pytest.approx(0.30)
-    assert "This session is pre-authorized (sonnet, cap $0.30)" in run(cmd)
+    assert "This session is pre-authorized (cap $0.30)" in run(cmd)
 
 
 def test_allow_forms(cmd, runtime):
-    assert "computed per call" in run(cmd, "allow")
-    assert "cap $0.25" in run(cmd, "allow sonnet 0.25")
-    assert "not available" in run(cmd, "allow opus")
+    assert "cap $0.50 per call" in run(cmd, "allow")
+    assert "cap $0.25" in run(cmd, "allow 0.25")
     assert "more than $0" in run(cmd, "allow $0")
-    assert "Usage" in run(cmd, "allow a b")
+    assert "Usage" in run(cmd, "allow opus")  # one advisor model: nothing to choose
+    assert "Usage" in run(cmd, "allow 1 2")
 
 
 def test_revoke(cmd, runtime):

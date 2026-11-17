@@ -9,7 +9,7 @@ from advisor_call.prompts import ADVISOR_SYSTEM
 from advisor_call.settings import parse_settings
 
 SETTINGS = parse_settings({"budget": {"cycle_start_day": 3}})
-LINE = SETTINGS.line("sonnet")
+LINE = SETTINGS.advisor
 
 
 def conv(n_exchanges: int) -> list[dict[str, str]]:

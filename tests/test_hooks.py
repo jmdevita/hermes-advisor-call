@@ -49,7 +49,7 @@ def test_rule_key_differs_per_session(hooks):
 
 def test_blocks_when_budget_used_up(hooks, runtime, config):
     # U-23 (day)
-    config["budget"].update(pacing="fixed", per_day_usd=0.10)
+    config["budget"].update(per_day_usd=0.10)
     runtime.ledger.record_exchange(
         ts=0,
         day=runtime.today(),
@@ -92,20 +92,10 @@ def test_blocks_when_cycle_budget_used_up(hooks, runtime, config):
 
 def test_grant_skips_prompt_and_revoke_restores_it(hooks, runtime):
     # U-24
-    runtime.manager.grant(SID, line="sonnet", cap_usd=None)
+    runtime.manager.grant(SID, cap_usd=None)
     assert gate(hooks) is None
     runtime.manager.revoke(SID)
     assert gate(hooks)["action"] == "approve"
-
-
-def test_grant_for_other_line_does_not_apply(hooks, runtime, config):
-    config["advisor"] = {"also_allow": ["opus"]}
-    runtime.manager.grant(SID, line="sonnet", cap_usd=0.01)
-    # A pre-authorization covers only the line it was given for: another
-    # line still asks, with its own computed cap, not the grant's $0.01.
-    assert gate(hooks) is None
-    d = gate(hooks, {"reason": "r", "question": "q", "line": "opus"})
-    assert d["action"] == "approve" and "bill cap $0.01" not in d["message"]
 
 
 def test_blocks_sender_outside_allowed_list(hooks, runtime, config):
@@ -150,7 +140,7 @@ def test_approvals_off_needs_grant(hooks, runtime, approvals):
     approvals["mode"] = False  # YAML `off`
     d = gate(hooks)
     assert d["action"] == "block" and "/second-opinion allow" in d["message"]
-    runtime.manager.grant(SID, line="sonnet", cap_usd=None)
+    runtime.manager.grant(SID, cap_usd=None)
     assert gate(hooks) is None
 
 
@@ -175,13 +165,16 @@ def test_reason_sanitized(hooks):
 def test_reason_cannot_pose_as_the_cap(hooks):
     d = gate(hooks, {"reason": 'x" | Bill cap $0.01, today $0.00 of $3.00', "question": "q"})
     # The real figures come first; the reason is quoted at the end, its quotes neutralised.
-    assert d["message"].startswith("Advisor call (sonnet, claude-sonnet-5-5): bill cap $0.79")
+    assert d["message"].startswith("Advisor call (sonnet, claude-sonnet-5-5): bill cap $0.50")
     assert d["message"].count('"') == 2
 
 
 def test_missing_session_and_misconfig_block(hooks, config):
     assert gate(hooks, session_id=None)["action"] == "block"
-    assert gate(hooks, {"reason": "r", "question": "q", "line": "nope"})["action"] == "block"
+    config["advisor"] = {"model": "claude-mystery-9"}  # no prices: cannot be used
+    d = gate(hooks)
+    assert d["action"] == "block" and "cannot be used" in d["message"]
+    config.pop("advisor")
     config["budget"].pop("cycle_start_day")
     d = gate(hooks)
     # U-37 (hook part)
@@ -233,11 +226,11 @@ def test_pre_llm_call_records_and_notifies_once(hooks, runtime):
     )
     assert out is None
     assert runtime.context.identity(SID) == ("42", "telegram")
-    runtime.manager.grant(SID, line="sonnet", cap_usd=0.4)
+    runtime.manager.grant(SID, cap_usd=0.4)
     out = hooks.pre_llm_call(session_id=SID, conversation_history=[], user_message="next")
     assert out == {
         "context": "[advisor-call] The user has pre-authorized advisor calls for "
-        "this session (model: sonnet, cap $0.40)."
+        "this session (cap $0.40 per call)."
     }
     assert hooks.pre_llm_call(session_id=SID, conversation_history=[], user_message="x") is None
 
@@ -288,7 +281,7 @@ def test_footer_disabled(hooks, tools, fake_llm, config):
 def test_session_finalize_ends_call(hooks, tools, fake_llm, runtime):
     fake_llm.script(reply())
     tools[OPEN]({"reason": "r", "question": "q"}, session_id=SID)
-    runtime.manager.grant(SID, line="sonnet", cap_usd=None)
+    runtime.manager.grant(SID, cap_usd=None)
     hooks.on_session_finalize(session_id=SID, platform="cli", reason="exit")
     call = runtime.manager.latest(SID)
     assert call.end_reason == "session_end" and runtime.manager.grant_for(SID) is None

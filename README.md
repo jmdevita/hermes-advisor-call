@@ -75,7 +75,7 @@ plugins:
 ```
 
 **`cycle_start_day` is required.** The plugin refuses every call until it is
-set, because a wrong billing cycle makes the daily pacing wrong for a whole
+set, because a wrong billing cycle makes the cycle budget wrong for a whole
 month. Find the date under the credit's expiry on the Claude Console billing
 page. `/second-opinion status` prints the resolved cycle (for example
 "Cycle: Nov 3 to Dec 2 (19 days left)") so you can compare.
@@ -105,8 +105,7 @@ back. The spend ledger in `plugin-data/advisor-call/` is kept.
 
 All settings live under `plugins.entries.advisor-call` and are read on every
 call, so budget edits apply without a restart. Changing the advisor model
-(`advisor.model`, `advisor.also_allow`) or `advisor.max_tokens` needs a
-restart. Invalid values fall back to
+(`advisor.model`) or `advisor.max_tokens` needs a restart. Invalid values fall back to
 the default with a warning in the Hermes log.
 
 ```yaml
@@ -116,11 +115,8 @@ plugins:
       budget:
         per_month_usd: 100.00       # budget per billing cycle
         cycle_start_day: 3          # REQUIRED, 1-31, no default
-        pacing: dynamic             # dynamic | fixed
-        per_call_usd: 0.50          # base per-call cap; scales with the allowance when dynamic
-        max_per_call_usd: 0         # optional ceiling on the dynamic per-call cap; 0 = none
-        per_day_usd: 3.00           # used only with pacing: fixed
-        max_per_day_usd: 0          # optional ceiling on the dynamic allowance; 0 = none
+        per_call_usd: 0.50          # cap per call
+        per_day_usd: 3.00           # cap per day
         max_messages_per_call: 20   # executor messages per call, including the first
         idle_timeout_minutes: 30
       approval:
@@ -131,7 +127,6 @@ plugins:
         redact_secrets: true
       advisor:
         model: sonnet               # sonnet (default) or opus, or a full model id
-        also_allow: []              # other models the executor may ask for, e.g. [opus]
         prices_per_mtok: {}         # only for models without shipped prices (see below)
         max_tokens: 4000            # reply limit per message
         timeout_seconds: 180
@@ -146,19 +141,16 @@ The shipped defaults are the ones above, so a fresh install needs only
 `cycle_start_day`. Prices are configuration because they change; check them
 against Anthropic's pricing page.
 
-### Budget and pacing
+### Budget
 
-- **Cycle:** runs from `cycle_start_day` to the day before the next one (in
-  shorter months, the last day of the month).
-- **Daily allowance** (`pacing: dynamic`): what is left of the cycle budget
-  divided by the days left, fixed for the day. Unspent money rolls forward,
-  so the allowance grows late in a cycle. At $100 over 30 days it starts at
-  $3.33.
-- **Per-call cap** (dynamic): `per_call_usd` scaled by how far today's
-  allowance is above the baseline ($0.50 at $3.33/day, $0.75 at $5.00/day),
-  never more than what is left today. It is fixed when the call opens and
-  shown on the approval prompt.
-- **The cycle budget is a hard limit** in both pacing modes.
+Three fixed caps, all hard limits:
+
+- **Per call** (`per_call_usd`): fixed when the call opens and shown on the
+  approval prompt. Never more than what is left today.
+- **Per day** (`per_day_usd`).
+- **Per cycle** (`per_month_usd`): the cycle runs from `cycle_start_day` to
+  the day before the next one (in shorter months, the last day of the
+  month).
 
 ### Choosing the advisor model
 
@@ -182,15 +174,7 @@ The cache-write price is derived: 1.25 times input with `cache_ttl: 5m`,
 reaches its dollar cap sooner; raise `budget.per_call_usd` if calls end
 early.
 
-Only the chosen model can be called. To let the executor ask for another
-one on a call (each call still needs approval, and a session approval or
-`/second-opinion allow` covers one model at a time):
-
-```yaml
-      advisor:
-        model: sonnet
-        also_allow: [opus]
-```
+There is one advisor model, set here; the executor cannot choose another.
 
 Any other Claude model id works if you give its prices; a model without
 prices is refused, never called. You can also override a shipped price this
@@ -234,8 +218,8 @@ auto-approve.
 
 | Command | What it does |
 |---|---|
-| `/second-opinion` or `/second-opinion status` | The advisor model (and any also allowed), the open call, today's spend against today's allowance, this cycle's spend, the cycle window, whether this session is pre-authorized |
-| `/second-opinion allow [model] [$cap]` | Pre-authorize calls to one model (default: the default model) for this session, optionally with a per-call cap (limited to what is left today). The executor is told on its next turn |
+| `/second-opinion` or `/second-opinion status` | The advisor model, the open call, today's spend against the daily cap, this cycle's spend, the cycle window, whether this session is pre-authorized |
+| `/second-opinion allow [$cap]` | Pre-authorize calls for this session, optionally with a per-call cap (limited to what is left today). The executor is told on its next turn |
 | `/second-opinion revoke` | Remove the pre-authorization |
 | `/second-opinion ask <question>` | Ask the advisor yourself: one message with the session transcript. No approval prompt, since you typed it; counts toward the budget |
 | `/second-opinion hangup` | End the open call now; the executor is told on its next message |
@@ -348,7 +332,7 @@ have been processed and billed anyway.
 | "Set ... cycle_start_day ..." | Add `budget.cycle_start_day` |
 | "advisor unavailable: ..." | `ANTHROPIC_API_KEY` in `~/.hermes/.env`, the credit balance in the Claude Console, `advisor.model` |
 | "... not scoped to a workspace ... anthropic-workspace-id header" | The API key was created with Organization scope. Create one with Scope set to a workspace and use that instead (an organization key also has Admin API rights, so delete it from the machine) |
-| "advisor model ... is not available" or "cannot be used" | The model is not `advisor.model` or in `also_allow`; or it has no prices (add them under `advisor.prices_per_mtok`); or its auxiliary slot has an `extra_body` without `max_tokens` |
+| "advisor model ... cannot be used" | The model has no prices (add them under `advisor.prices_per_mtok`); or its auxiliary slot has an `extra_body` without `max_tokens` |
 | The executor never calls | Hermes puts plugin tools behind tool search by default. The executor is told how to find them; if it still fails, set `tools.tool_search.enabled: off` (global) |
 | `/second-opinion allow` says "Send a message first" | A new chat has no session until its first message |
 | The bill is higher than the Console | Expected while caching is on: the estimate is on the safe side |

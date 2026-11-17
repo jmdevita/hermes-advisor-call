@@ -97,7 +97,6 @@ class Call:
 class Grant:
     """A /second-opinion allow pre-authorization for one session."""
 
-    line: str
     cap_usd: float | None
     granted_at: float
     notified: bool = False
@@ -398,10 +397,10 @@ class CallManager:
         self._notify(ended)
         return call
 
-    def grant(self, session_id: str | None, *, line: str, cap_usd: float | None) -> Grant:
+    def grant(self, session_id: str | None, *, cap_usd: float | None) -> Grant:
         sid = self._check_session(session_id)
         with self._lock:
-            g = Grant(line=line, cap_usd=cap_usd, granted_at=self._clock())
+            g = Grant(cap_usd=cap_usd, granted_at=self._clock())
             self._touch(self._grants, sid, g, self._max)
             return g
 

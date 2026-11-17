@@ -412,16 +412,12 @@ places. Replaced, before any release, with:
   model id. Switching is one line.
 - Shipped prices for the aliased models; the cache-write price is derived
   from the TTL (1.25x input for `5m`, 2x for `1h`).
-- `advisor.also_allow`: other models the executor may name on a call.
-  Empty by default, so the executor cannot pick a more expensive model on
-  its own.
 - `advisor.prices_per_mtok`: prices for other models, or overrides of the
   shipped ones, keyed by model id or alias. An unpriced model is refused.
 
-Internally each allowed model is still a "line" (short name used in
-approval rule keys, grants, the ledger and the auxiliary slot name), so
-nothing else changed. The old `lines` and `default_line` keys are ignored
-with a warning. The tool's argument is now `model` (`line` still accepted).
+Internally the model is still a "line" (short name used in the approval
+rule key, the ledger and the auxiliary slot name). The old `lines` and
+`default_line` keys are ignored with a warning.
 
 ### 2.8 Auto-suggest (v0.2)
 
@@ -474,6 +470,29 @@ message in the session is kept (up to 2,000 characters), labelled
 "first request", ahead of the most recent part. The advisor should never
 lose what the user actually asked. Nothing changes when the whole session
 fits.
+
+### 2.10 Simplifications (v0.2, decided 2026-11-17)
+
+- **Fixed caps.** v0.1 had dynamic pacing: the daily allowance was the
+  cycle budget left divided by the days left, and the per-call cap scaled
+  with it (`pacing`, `max_per_call_usd`, `max_per_day_usd`). It made the
+  caps hard to predict (a `per_call_usd: 0.01` showed up as $0.016 in live
+  check L-9). Now three fixed caps: `per_call_usd`, `per_day_usd`,
+  `per_month_usd` over the cycle from `cycle_start_day`. The removed keys
+  are ignored with a warning.
+- **One advisor model.** v0.1 let the executor name another model on a call
+  (`advisor.also_allow`, a `model` argument on `advisor_call_open`, one
+  auxiliary slot per model, grants per model). Now there is one model,
+  `advisor.model`; the tool has no `model` argument and a grant covers the
+  session. `also_allow` is ignored with a warning.
+- **Considered and kept: prompt caching.** The Console's cache breakdown for
+  Nov 14 settles live check L-6: about 3.3K uncached, 25K cache-read and
+  75K cache-write input tokens, so caching works on the real API, and the
+  per-type prices give about $0.40 against $0.41 charged and $0.45 counted
+  by the plugin. Savings were about one cent because most test calls had one
+  or two messages; they grow with the length of a call (roughly $0.04
+  against $0.24 of input for 10 messages on a full transcript), which is the
+  plugin's main use. The estimate code stays.
 
 ---
 
@@ -573,10 +592,10 @@ installed from `c6fc519`.
 | L-4 | Pass | Deny: nothing sent, the executor reported the refusal and did not retry |
 | L-5 | Pass (second attempt) | First attempt: Anthropic returned 400 "This API key is not scoped to a workspace", because the key was created with Organization scope. The plugin handled it as designed: $0.00 billed, the call ended with reason `error`, the bill footer shown, no invented advice. With a workspace-scoped key: approved once, 2 messages (open, then the executor ran checks on the machine and sent the results), hung up by the executor; footer `2 messages · ~$0.13 of $0.79 (estimate) · ended (hung up) · today $0.13 of $5.26`; `/second_opinion bill` shows $0.13 today and "(includes estimates)". The advice was substantive (it caught a symlinked directory a backup tool would have skipped) |
 | L-12 | Pass | Cycle to date (all calls of Nov 14): the plugin counted $0.45 (marked as including estimates); the Console's promotional credit went from $100.00 to $99.59, so $0.41. The estimate ran about 10% high, the intended direction; the plugin's pacing uses its own, higher figure |
-| L-6 | Inconclusive, accepted | Console usage for Nov 14: 103,360 input and 20,779 output tokens. Billing all input at the plain $2.00/MTok gives $0.415, matching the $0.41 charged, which hints that the cache markers may not take effect on the real API (cache writes would have cost more; most test calls had only 1-2 messages, so few cache reads were possible). The local end-to-end check shows the markers on the wire. If caching is not happening, real cost equals `cache_ttl: off`, still under the plugin's estimate. Accepted as good enough by the maintainer; a per-type token breakdown from the Console would settle it |
+| L-6 | Pass (settled 2026-11-17, see 2.10; the note that follows was written before the Console's cache breakdown was checked) | Console usage for Nov 14: 103,360 input and 20,779 output tokens. Billing all input at the plain $2.00/MTok gives $0.415, matching the $0.41 charged, which hints that the cache markers may not take effect on the real API (cache writes would have cost more; most test calls had only 1-2 messages, so few cache reads were possible). The local end-to-end check shows the markers on the wire. If caching is not happening, real cost equals `cache_ttl: off`, still under the plugin's estimate. Accepted as good enough by the maintainer; a per-type token breakdown from the Console would settle it |
 | L-7 | Pass | Tapped Session; a second call in the same chat ran with no prompt |
 | L-8 | Pass | Tapped Always in one session; after `/new` the prompt appeared again (the session id in the rule key works) |
-| L-9 | Pass | With `per_call_usd: 0.01` (scaled to about $0.016 by dynamic pacing) the call ended with "bill cap reached" before anything was sent. $0.01 rather than $0.03: at $0.03 the scaled cap (~$0.05) sits right at the cost of one opening message, so the outcome is not deterministic |
+| L-9 | Pass | With `per_call_usd: 0.01` (scaled to about $0.016 by the dynamic pacing of v0.1, since removed) the call ended with "bill cap reached" before anything was sent. $0.01 rather than $0.03: at $0.03 the scaled cap (~$0.05) sits right at the cost of one opening message, so the outcome is not deterministic |
 | L-10 | Pass | `/second_opinion allow`, then a call ran with no prompt |
 | L-11 | Pass | `/second_opinion ask` answered directly; `/second_opinion hangup` during an executor call ended it and the executor stopped |
 | L-13 | Pass | With `advisor.max_tokens: 300`, Sonnet 5.5 spent the whole limit thinking and returned no text, twice: the limit reaches the API (without it the long answer would have come back). The plugin reported "empty reply", billed ~$0.01 each, closed the call; the executor answered on its own without pretending to be the advisor. Console check of output tokens pending |
@@ -639,11 +658,11 @@ Findings so far:
 | U-28 | `/second-opinion` subcommands: status, allow with a custom cap clamped to the day's remainder, ask, hangup, bill, transcript |
 | U-29 | The bill footer is added only on turns with advisor activity |
 | U-30 | `register()` registers every tool, hook, the middleware, the command, the guidance section and one auxiliary task per line |
-| U-31 | Dynamic allowance: day 1 of a 30-day cycle at $100 gives $3.33; after 10 days without spend, $5.00; the last day gives the whole remainder |
-| U-32 | The allowance does not change during a day as spend accrues; `max_per_day_usd` clamps it; it never goes below 0 |
+| U-31 | The daily cap is `per_day_usd` on every day of the cycle |
+| U-32 | The daily cap does not change as spend accrues; what is available never goes below 0 |
 | U-33 | Cycle boundaries: `cycle_start_day: 31` in 30-day months and February; spend from the previous cycle is excluded |
-| U-34 | The cycle total is a hard limit in both pacing modes; `pacing: fixed` uses `per_day_usd` |
-| U-35 | Dynamic per-call cap: $0.50 at the baseline allowance, $0.75 at 1.5x, $1.50 at 3x; clamped by `max_per_call_usd` and what is left today; fixed pacing keeps `per_call_usd` |
+| U-34 | The cycle total is a hard limit |
+| U-35 | The per-call cap is `per_call_usd`, clamped to what is left today; a custom cap from `/second-opinion allow` replaces it |
 | U-36 | The per-call cap is fixed when the call opens; the approval message shows that cap |
 | U-37 | Missing or invalid `cycle_start_day`: the hook blocks, `/second-opinion ask` and `allow` refuse, `/second-opinion status` shows the setup message |
 | U-38 | `cycle_start_day: 3`: on Nov 14 the window is Nov 3 to Dec 2 with 19 days left; Dec 2 is the last day; Dec 3 starts a new cycle with zero spend |

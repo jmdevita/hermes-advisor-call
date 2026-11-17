@@ -1,6 +1,5 @@
 """U-2, U-3, U-31 to U-35, U-38: cost, estimates, cycle, allowance, caps."""
 
-import dataclasses
 import datetime as dt
 
 import pytest
@@ -219,99 +218,49 @@ def test_cycle_across_year_end():
     assert (c.start, c.end) == (D(2026, 12, 15), D(2027, 1, 14))
 
 
-# ------------------------------------------------------------------- allowance (U-31, U-32, U-34)
+# ------------------------------------------------------------------- caps (U-31, U-32, U-35)
 
 # A 30-day cycle: start day 1 in November (Nov 1 to Nov 30).
 NOV1 = D(2026, 11, 1)
 
 
-def test_dynamic_allowance_day_one_and_rollforward():
-    b = budget()
-    assert budget_state(b, NOV1, spent_today=0, spent_before_today=0).allowance == pytest.approx(
-        100 / 30
+def test_daily_cap_is_fixed():
+    b = budget()  # per_day_usd 3.00
+    for day, before in ((NOV1, 0), (D(2026, 11, 11), 0), (D(2026, 11, 27), 60)):
+        assert budget_state(b, day, spent_today=1.0, spent_before_today=before).allowance == 3.0
+    assert (
+        budget_state(budget(per_day_usd=5.0), NOV1, spent_today=0, spent_before_today=0).allowance
+        == 5.0
     )
-    # Nothing spent for 10 days: day 11 allows 100 / 20.
-    assert budget_state(
-        b, D(2026, 11, 11), spent_today=0, spent_before_today=0
-    ).allowance == pytest.approx(5.00)
-    # $40 left with 4 days to go: $10/day.
-    assert budget_state(
-        b, D(2026, 11, 27), spent_today=0, spent_before_today=60
-    ).allowance == pytest.approx(10.00)
-    # Last day: everything left.
-    assert budget_state(
-        b, D(2026, 11, 30), spent_today=0, spent_before_today=73
-    ).allowance == pytest.approx(27.00)
 
 
-def test_allowance_fixed_for_the_day_and_clamped():
-    b = budget()
-    a1 = budget_state(b, NOV1, spent_today=0, spent_before_today=0).allowance
-    a2 = budget_state(b, NOV1, spent_today=3.0, spent_before_today=0).allowance
-    assert a1 == a2  # spend today does not change today's allowance
-    capped = budget(max_per_day_usd=2.0)
-    assert budget_state(capped, NOV1, spent_today=0, spent_before_today=0).allowance == 2.0
-    over = budget_state(b, D(2026, 11, 20), spent_today=0, spent_before_today=120)
-    assert over.allowance == 0.0
-
-
-def test_fixed_pacing_and_cycle_hard_limit():
-    b = budget(pacing="fixed", per_day_usd=5.0)
+def test_cycle_budget_is_the_hard_limit():
+    b = budget(per_day_usd=5.0)
     s = budget_state(b, D(2026, 11, 29), spent_today=0, spent_before_today=98.0)
     assert s.allowance == 5.0
-    assert s.available == pytest.approx(2.0)  # cycle budget is the hard limit
+    assert s.available == pytest.approx(2.0)
     reason = preflight_refusal(
         call_cost=0, call_cap_usd=10, exchanges=0, max_messages=20, est_cost=2.5, state=s
     )
     assert reason == "month_cap"
-    dyn = budget_state(budget(), D(2026, 11, 29), spent_today=1.0, spent_before_today=98.0)
-    assert preflight_refusal(
-        call_cost=0, call_cap_usd=10, exchanges=0, max_messages=20, est_cost=1.5, state=dyn
-    ) in ("day_cap", "month_cap")
+    over = budget_state(b, D(2026, 11, 29), spent_today=0, spent_before_today=120.0)
+    assert over.available == 0.0
 
 
-# ------------------------------------------------------------------- call cap (U-35)
-
-
-def _state_with_allowance(b, allowance_factor, spent_today=0.0):
-    """A state on Nov 1 whose allowance is factor x the baseline."""
-    s = budget_state(b, NOV1, spent_today=spent_today, spent_before_today=0)
-    target = s.baseline * allowance_factor
-    return dataclasses.replace(s, allowance=target)
-
-
-@pytest.mark.parametrize("factor,expected", [(1.0, 0.50), (1.5, 0.75), (3.0, 1.50)])
-def test_dynamic_call_cap_scales(factor, expected):
-    b = budget()
-    assert call_cap(b, _state_with_allowance(b, factor)) == pytest.approx(expected)
-
-
-def test_call_cap_clamps():
-    b = budget(max_per_call_usd=1.0)
-    assert call_cap(b, _state_with_allowance(b, 3.0)) == pytest.approx(1.0)
+def test_call_cap_is_fixed_and_clamped():
+    b = budget()  # per_call_usd 0.50
+    assert call_cap(b, budget_state(b, NOV1, spent_today=0, spent_before_today=0)) == 0.5
+    assert call_cap(b, budget_state(b, D(2026, 11, 27), spent_today=0, spent_before_today=0)) == 0.5
     # Never more than what is left today.
-    b2 = budget()
-    s = _state_with_allowance(b2, 3.0, spent_today=9.8)  # allowance 10.0, 0.2 left
-    assert call_cap(b2, s) == pytest.approx(0.2)
-    # Fixed pacing keeps the base cap.
-    bf = budget(pacing="fixed", per_day_usd=3.0)
-    assert call_cap(bf, budget_state(bf, NOV1, spent_today=0, spent_before_today=0)) == 0.5
+    s = budget_state(b, NOV1, spent_today=2.8, spent_before_today=0)
+    assert call_cap(b, s) == pytest.approx(0.2)
 
 
 def test_custom_cap_replaces_but_is_clamped():
     b = budget()
-    s = budget_state(b, NOV1, spent_today=3.0, spent_before_today=0)  # ~0.33 left today
-    assert call_cap(b, s, custom_cap=2.0) == pytest.approx(100 / 30 - 3.0)
+    s = budget_state(b, NOV1, spent_today=2.0, spent_before_today=0)  # 1.00 left today
+    assert call_cap(b, s, custom_cap=2.0) == pytest.approx(1.0)
     assert call_cap(b, s, custom_cap=0.1) == pytest.approx(0.1)
-
-
-def test_mid_cycle_install_example():
-    # Installed mid-cycle on Nov 14 with cycle_start_day 3: $100/19, cap ~ $0.79.
-    b = parse_settings({"budget": {"cycle_start_day": 3}}).budget
-    s = budget_state(b, D(2026, 11, 14), spent_today=0, spent_before_today=0)
-    assert s.allowance == pytest.approx(100 / 19)
-    assert call_cap(b, s) == pytest.approx(0.5 * (100 / 19) / (100 / 30), abs=1e-9)
-    assert round(call_cap(b, s), 2) == 0.79
 
 
 def test_preflight_order_and_reserved_elsewhere():
@@ -320,7 +269,7 @@ def test_preflight_order_and_reserved_elsewhere():
     assert preflight_refusal(**{**kw, "exchanges": 20}, est_cost=0.01) == "turn_limit"
     assert preflight_refusal(**kw, est_cost=0.6) == "bill_cap"
     assert preflight_refusal(**kw, est_cost=0.1) == ""
-    assert preflight_refusal(**kw, est_cost=0.1, reserved_elsewhere=3.3) == "day_cap"
+    assert preflight_refusal(**kw, est_cost=0.1, reserved_elsewhere=2.95) == "day_cap"
 
 
 def test_budget_state_requires_cycle_day():

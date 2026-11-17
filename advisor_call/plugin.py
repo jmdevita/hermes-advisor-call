@@ -32,7 +32,7 @@ def register(
     clock: Any = None,
 ) -> Runtime:
     """Register tools, hooks, middleware, /second-opinion, the executor guidance and
-    one auxiliary task per configured advisor line. Never touches ctx.llm
+    the advisor's auxiliary task. Never touches ctx.llm
     here: it is resolved lazily, on the first advisor request."""
     rt = Runtime(
         llm=lambda: ctx.llm, ledger=ledger or Ledger.for_hermes(), settings=settings, clock=clock
@@ -65,20 +65,20 @@ def register(
 
     ctx.register_system_prompt_section(SYSTEM_PROMPT_SECTION_ID, EXECUTOR_GUIDANCE)
 
-    # One auxiliary slot per line, shown in Hermes' model picker. max_tokens
+    # The advisor's auxiliary slot, shown in Hermes' model picker. max_tokens
     # rides in extra_body because Hermes does not forward complete()'s
     # max_tokens on the native Anthropic route (DESIGN.md, O-3b). Changing
-    # lines or max_tokens needs a restart.
-    for line in initial.lines.values():
-        ctx.register_auxiliary_task(
-            line.task_key,
-            display_name=f"Advisor call: {line.name}",
-            description=f"advisor-call advisor model ({line.name}: {line.model})",
-            defaults={
-                "provider": line.provider or "auto",
-                "model": line.model,
-                "timeout": initial.timeout_seconds,
-                "extra_body": {"max_tokens": line.max_tokens},
-            },
-        )
+    # the model or max_tokens needs a restart.
+    line = initial.advisor
+    ctx.register_auxiliary_task(
+        line.task_key,
+        display_name=f"Advisor call: {line.name}",
+        description=f"advisor-call advisor model ({line.name}: {line.model})",
+        defaults={
+            "provider": line.provider or "auto",
+            "model": line.model,
+            "timeout": initial.timeout_seconds,
+            "extra_body": {"max_tokens": line.max_tokens},
+        },
+    )
     return rt

@@ -137,17 +137,10 @@ class Hooks:
             return None
         except CallError:
             pass
-        # 4. Line and cycle configuration.
-        requested = args.get("model") or args.get("line")
-        line_name = requested if isinstance(requested, str) else ""
-        line = settings.line(line_name.strip() or None)
-        if line is None or not line.usable:
-            valid = ", ".join(settings.usable_lines()) or "none"
-            detail = f" ({line.problem})" if line is not None and line.problem else ""
-            return _block(
-                f"Advisor model {(line_name or settings.default_line)!r} is not "
-                f"available{detail}. Allowed: {valid}."
-            )
+        # 4. Advisor model and cycle configuration.
+        line = settings.advisor
+        if not line.usable:
+            return _block(f"Advisor model {line.model!r} cannot be used: {line.problem}.")
         if settings.budget.cycle_error:
             return _block(settings.budget.cycle_error)
         # 5. Budget (fail closed if spend cannot be read).
@@ -159,8 +152,6 @@ class Hooks:
                 "judgment and tell the user."
             )
         grant = rt.manager.grant_for(session_id)
-        if grant is not None and grant.line != line.name:
-            grant = None  # a pre-authorization covers only the line it was given for
         cap = call_cap(settings.budget, state, grant.cap_usd if grant is not None else None)
         if state.available <= 0 or cap <= 0:
             return _block(
@@ -181,7 +172,7 @@ class Hooks:
                     _platform(rt, session_id),
                 )
             )
-        # 7. Pre-authorized by the user for this session and line.
+        # 7. Pre-authorized by the user for this session.
         if grant is not None:
             rt.authorize(session_id, "grant")
             return None
@@ -231,10 +222,10 @@ class Hooks:
                     cap = call_cap(settings.budget, self.rt.budget(settings))
                 except (ValueError, LedgerError):
                     cap = None
-            cap_text = f", cap {money(cap)}" if cap is not None else ""
+            cap_text = f" (cap {money(cap)} per call)" if cap is not None else ""
             return {
                 "context": "[advisor-call] The user has pre-authorized advisor calls for "
-                f"this session (model: {grant.line}{cap_text})."
+                f"this session{cap_text}."
             }
         except Exception:  # noqa: BLE001 - capture must never break a turn
             log.exception("advisor-call: pre_llm_call failed")
@@ -313,8 +304,7 @@ class Hooks:
             pass
         if unattended and self.rt.manager.grant_for(session_id) is None:
             return False  # nobody could approve it
-        line = settings.line(None)
-        if line is None or not line.usable or settings.budget.cycle_error:
+        if not settings.advisor.usable or settings.budget.cycle_error:
             return False
         try:
             return self.rt.budget(settings).available > 0

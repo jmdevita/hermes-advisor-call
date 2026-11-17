@@ -41,11 +41,8 @@ DEFAULTS: dict[str, Any] = {
     "budget": {
         "per_month_usd": 100.00,
         "cycle_start_day": None,  # required; no default on purpose
-        "pacing": "dynamic",
         "per_call_usd": 0.50,
-        "max_per_call_usd": 0.0,
         "per_day_usd": 3.00,
-        "max_per_day_usd": 0.0,
         "max_messages_per_call": 20,
         "idle_timeout_minutes": 30,
     },
@@ -57,7 +54,6 @@ DEFAULTS: dict[str, Any] = {
     },
     "advisor": {
         "model": DEFAULT_MODEL,
-        "also_allow": [],
         "prices_per_mtok": {},
         "max_tokens": 4000,
         "timeout_seconds": 180,
@@ -74,7 +70,6 @@ MIN_USEFUL_MAX_TOKENS = 1024
 
 PRICE_KEYS = ("input", "output", "cache_read")  # cache_write: optional, derived
 CACHE_TTLS = ("5m", "1h", "off")
-PACINGS = ("dynamic", "fixed")
 
 
 @dataclass(frozen=True)
@@ -89,8 +84,8 @@ class Prices:
 
 @dataclass(frozen=True)
 class Line:
-    """One callable advisor model. ``name`` is the short name used in
-    approvals, grants, the ledger and Hermes' auxiliary slot
+    """The advisor model. ``name`` is the short name used in
+    approvals, the ledger and Hermes' auxiliary slot
     (``auxiliary.advisor_call_<name>``): the alias for a shipped model
     (``sonnet``), else the model id with non-alphanumerics as ``_``."""
 
@@ -114,11 +109,8 @@ class Line:
 class Budget:
     per_month_usd: float
     cycle_start_day: int | None  # None when missing or invalid
-    pacing: str
     per_call_usd: float
-    max_per_call_usd: float
     per_day_usd: float
-    max_per_day_usd: float
     max_messages_per_call: int
     idle_timeout_minutes: float
 
@@ -129,8 +121,7 @@ class Budget:
 
 @dataclass(frozen=True)
 class Settings:
-    default_line: str
-    lines: dict[str, Line]
+    advisor: Line
     budget: Budget
     refuse_when_approvals_off: bool
     opening_transcript_chars: int
@@ -145,16 +136,6 @@ class Settings:
     approvals_mode: str = "manual"  # Hermes' approvals.mode: manual | smart | off
     suggest: bool = True  # tell the user when Hermes flags a tool loop
     warnings: tuple[str, ...] = field(default=())
-
-    def line(self, name: str | None) -> Line | None:
-        """The advisor for a name, alias or full model id; the default
-        advisor when name is empty. None when that model is not allowed."""
-        if not name:
-            return self.lines.get(self.default_line)
-        return self.lines.get(name) or self.lines.get(resolve_model(name)[0])
-
-    def usable_lines(self) -> list[str]:
-        return sorted(n for n, line in self.lines.items() if line.usable)
 
     @property
     def caching(self) -> bool:
@@ -343,7 +324,7 @@ def normalize_approvals_mode(mode: Any) -> str:
 def parse_settings(raw: Any, auxiliary: Any = None, approvals: Any = None) -> Settings:
     """Merge the user's ``plugins.entries.advisor-call`` mapping over the
     defaults and validate it. ``auxiliary`` is Hermes' ``auxiliary`` config
-    block, used for each line's effective model and provider. Never raises;
+    block, used for the advisor's effective model and provider. Never raises;
     problems become warnings."""
     w = _Collector()
     if raw is None:
@@ -354,10 +335,7 @@ def parse_settings(raw: Any, auxiliary: Any = None, approvals: Any = None) -> Se
 
     for old in ("lines", "default_line"):
         if old in raw:
-            w.warn(
-                f"{old} is no longer used; choose the advisor with advisor.model "
-                "(and advisor.also_allow for more than one)"
-            )
+            w.warn(f"{old} is no longer used; choose the advisor with advisor.model")
 
     adv = _section(raw, "advisor", w)
     ad = DEFAULTS["advisor"]
@@ -370,49 +348,28 @@ def parse_settings(raw: Any, auxiliary: Any = None, approvals: Any = None) -> Se
     if not isinstance(model_ref, str) or not model_ref.strip():
         w.warn(f"advisor.model must be a model name such as sonnet or opus; got {model_ref!r}")
         model_ref = ad["model"]
-    also = adv.get("also_allow") or []
-    if isinstance(also, str):
-        also = [also]
-    if not isinstance(also, list | tuple):
-        w.warn("advisor.also_allow must be a list of model names; ignoring it")
-        also = []
-    lines: dict[str, Line] = {}
-    for ref in [model_ref, *[str(x) for x in also if str(x).strip()]]:
-        line = _model_line(ref, overrides, cache_ttl, w)
-        lines.setdefault(line.name, line)
-    default_line = resolve_model(model_ref)[0]
+    if adv.get("also_allow"):
+        w.warn("advisor.also_allow is no longer used; there is one advisor model, advisor.model")
+    advisor = _model_line(model_ref, overrides, cache_ttl, w)
 
     b = _section(raw, "budget", w)
     bd = DEFAULTS["budget"]
-    pacing = b.get("pacing", bd["pacing"])
-    if pacing not in PACINGS:
-        w.warn(f"budget.pacing must be dynamic or fixed; got {pacing!r}, using dynamic")
-        pacing = "dynamic"
+    for old in ("pacing", "max_per_call_usd", "max_per_day_usd"):
+        if old in b:
+            w.warn(
+                f"budget.{old} is no longer used; the caps are fixed: per_call_usd, "
+                "per_day_usd and per_month_usd"
+            )
     budget = Budget(
         per_month_usd=_number(
             b.get("per_month_usd"), bd["per_month_usd"], "budget.per_month_usd", w, allow_zero=False
         ),
         cycle_start_day=_cycle_start_day(b.get("cycle_start_day"), w),
-        pacing=pacing,
         per_call_usd=_number(
             b.get("per_call_usd"), bd["per_call_usd"], "budget.per_call_usd", w, allow_zero=False
         ),
-        max_per_call_usd=_number(
-            b.get("max_per_call_usd"),
-            bd["max_per_call_usd"],
-            "budget.max_per_call_usd",
-            w,
-            allow_zero=True,
-        ),
         per_day_usd=_number(
             b.get("per_day_usd"), bd["per_day_usd"], "budget.per_day_usd", w, allow_zero=False
-        ),
-        max_per_day_usd=_number(
-            b.get("max_per_day_usd"),
-            bd["max_per_day_usd"],
-            "budget.max_per_day_usd",
-            w,
-            allow_zero=True,
         ),
         max_messages_per_call=_integer(
             b.get("max_messages_per_call"),
@@ -448,11 +405,10 @@ def parse_settings(raw: Any, auxiliary: Any = None, approvals: Any = None) -> Se
             "answering and the thinking counts against this limit, so replies may come "
             f"back empty. Use at least {MIN_USEFUL_MAX_TOKENS}."
         )
-    lines = {n: _apply_auxiliary(line, auxiliary, max_tokens, w) for n, line in lines.items()}
+    advisor = _apply_auxiliary(advisor, auxiliary, max_tokens, w)
 
     settings = Settings(
-        default_line=default_line,
-        lines=lines,
+        advisor=advisor,
         budget=budget,
         refuse_when_approvals_off=_boolean(
             a.get("refuse_when_approvals_off"), True, "approval.refuse_when_approvals_off", w

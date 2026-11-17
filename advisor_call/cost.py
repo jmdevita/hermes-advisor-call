@@ -259,8 +259,7 @@ class BudgetState:
     today: dt.date
     spent_today: float
     spent_before_today: float  # this cycle, excluding today
-    allowance: float  # today's allowance (fixed for the day)
-    baseline: float  # per_month / days in cycle
+    allowance: float  # the daily cap, budget.per_day_usd
     per_month: float
 
     @property
@@ -285,18 +284,6 @@ class BudgetState:
         return self.cycle.days_left(self.today)
 
 
-def daily_allowance(
-    budget: Budget, cycle: Cycle, today: dt.date, spent_before_today: float
-) -> float:
-    if budget.pacing == "fixed":
-        allowance = budget.per_day_usd
-    else:
-        allowance = (budget.per_month_usd - spent_before_today) / cycle.days_left(today)
-        if budget.max_per_day_usd > 0:
-            allowance = min(allowance, budget.max_per_day_usd)
-    return max(0.0, allowance)
-
-
 def budget_state(
     budget: Budget, today: dt.date, *, spent_today: float, spent_before_today: float
 ) -> BudgetState:
@@ -309,26 +296,16 @@ def budget_state(
         today=today,
         spent_today=spent_today,
         spent_before_today=spent_before_today,
-        allowance=daily_allowance(budget, cycle, today, spent_before_today),
-        baseline=budget.per_month_usd / cycle.days,
+        allowance=budget.per_day_usd,
         per_month=budget.per_month_usd,
     )
 
 
 def call_cap(budget: Budget, state: BudgetState, custom_cap: float | None = None) -> float:
-    """Per-call bill cap, computed once when a call opens.
-
-    Dynamic pacing scales the base cap by how far today's allowance is above
-    or below the baseline daily share. A custom cap from /second-opinion allow
-    replaces the computed one. Never more than can be spent right now."""
-    if custom_cap is not None:
-        cap = custom_cap
-    elif budget.pacing == "dynamic" and state.baseline > 0:
-        cap = budget.per_call_usd * (state.allowance / state.baseline)
-        if budget.max_per_call_usd > 0:
-            cap = min(cap, budget.max_per_call_usd)
-    else:
-        cap = budget.per_call_usd
+    """Per-call bill cap, fixed when a call opens: budget.per_call_usd, or a
+    custom cap from /second-opinion allow. Never more than can be spent right
+    now."""
+    cap = custom_cap if custom_cap is not None else budget.per_call_usd
     return max(0.0, min(cap, state.available))
 
 

@@ -227,7 +227,7 @@ def test_lru_bound(clock):
 def test_grants_and_notice(clock):
     mgr, _ = make(clock)
     assert mgr.grant_for("s1") is None
-    mgr.grant("s1", line="sonnet", cap_usd=0.4)
+    mgr.grant("s1", cap_usd=0.4)
     assert mgr.grant_for("s1").cap_usd == 0.4
     assert mgr.take_grant_notice("s1") is not None
     assert mgr.take_grant_notice("s1") is None  # only once
@@ -245,7 +245,7 @@ def test_activity_flag(clock):
 def test_end_session_clears_everything(clock):
     mgr, ended = make(clock)
     call, _ = mgr.open("s1", line="sonnet", cap_usd=0.5)
-    mgr.grant("s1", line="sonnet", cap_usd=None)
+    mgr.grant("s1", cap_usd=None)
     mgr.mark_activity("s1")
     assert mgr.end_session("s1") is call
     assert call.end_reason == "session_end" and mgr.grant_for("s1") is None

@@ -198,7 +198,7 @@ def test_no_line_when_a_call_could_not_happen(hooks, runtime, config, tools, fak
     loop_flagged(hooks)
     assert final(hooks) is None
     # Today's allowance is used up.
-    config["budget"].update(pacing="fixed", per_day_usd=0.000001)
+    config["budget"].update(per_day_usd=0.000001)
     start_turn(hooks, sid="s2")
     loop_flagged(hooks, sid="s2")
     assert final(hooks, sid="s2") is None
@@ -214,7 +214,7 @@ def test_unattended_needs_a_grant(hooks, runtime):
     loop_flagged(hooks)
     assert final(hooks, platform="cron") is None
     start_turn(hooks, platform="cron", sid="s2")
-    runtime.manager.grant("s2", line="sonnet", cap_usd=None)
+    runtime.manager.grant("s2", cap_usd=None)
     loop_flagged(hooks, sid="s2")
     assert "💡" in final(hooks, sid="s2", platform="cron")
 

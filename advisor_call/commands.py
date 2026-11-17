@@ -28,8 +28,8 @@ DESCRIPTION = "Advisor calls: status, pre-authorize, ask directly, hang up, see 
 CHAT_LIMIT = 3500  # stay well under Telegram's 4096-character message limit
 
 USAGE = f"""\
-/{COMMAND} or /{COMMAND} status   line, open call, today's and this cycle's spend
-/{COMMAND} allow [model] [$cap]   pre-authorize advisor calls for this session
+/{COMMAND} or /{COMMAND} status   advisor, open call, today's and this cycle's spend
+/{COMMAND} allow [$cap]           pre-authorize advisor calls for this session
 /{COMMAND} revoke                 remove the pre-authorization
 /{COMMAND} ask <question>         ask the advisor yourself (one message, counts toward the budget)
 /{COMMAND} hangup                 end the open call now
@@ -113,12 +113,6 @@ class SecondOpinionCommand:
         except LedgerError as exc:
             return [f"Spend cannot be read: {exc}"]
         today = self.rt.today()
-        derived = (
-            f"budget left {money(state.per_month - state.spent_before_today)} / "
-            f"{state.days_left} days"
-            if b.pacing == "dynamic"
-            else "fixed daily allowance"
-        )
         est = ""
         try:
             if self.rt.ledger.has_estimates(state.cycle.start, today):
@@ -126,7 +120,7 @@ class SecondOpinionCommand:
         except LedgerError:
             pass
         return [
-            f"Today: {money(state.spent_today)} of {money(state.allowance)} ({derived})",
+            f"Today: {money(state.spent_today)} of {money(state.allowance)}",
             f"This cycle: {money(state.spent_cycle)} of {money(state.per_month)}{est}",
             state.cycle.describe(today),
         ]
@@ -142,21 +136,14 @@ class SecondOpinionCommand:
     # ----------------------------------------------------------------- subcommands
 
     def status(self, settings: Settings, session_id: str | None, _: str) -> str:
-        line = settings.line(None)
-        out = []
-        if line is not None:
-            ok = "" if line.usable else f" (cannot be used: {line.problem})"
-            out.append(f"Advisor: {line.name} ({line.model}){ok}")
-        else:
-            out.append(f"Advisor: {settings.default_line!r} is not configured")
-        others = [n for n in settings.lines if n != settings.default_line]
-        if others:
-            out.append(f"Also allowed: {', '.join(others)}")
+        line = settings.advisor
+        ok = "" if line.usable else f" (cannot be used: {line.problem})"
+        out = [f"Advisor: {line.name} ({line.model}){ok}"]
         out += self._budget_lines(settings)
         if not settings.budget.cycle_error:
             try:
                 cap = call_cap(settings.budget, self.rt.budget(settings))
-                out.append(f"Per-call cap today: {money(cap)}")
+                out.append(f"Per-call cap: {money(cap)}")
             except (ValueError, LedgerError):
                 pass
         if settings.suggest:
@@ -178,29 +165,23 @@ class SecondOpinionCommand:
                 out.append(self._call_line(call))
             grant = self.rt.manager.grant_for(session_id)
             if grant is not None:
-                cap_text = f", cap {money(grant.cap_usd)}" if grant.cap_usd is not None else ""
-                out.append(f"This session is pre-authorized ({grant.line}{cap_text}).")
+                cap_text = f" (cap {money(grant.cap_usd)})" if grant.cap_usd is not None else ""
+                out.append(f"This session is pre-authorized{cap_text}.")
             else:
                 out.append("This session is not pre-authorized; each call asks for approval.")
         return "\n".join(out)
 
     def allow(self, settings: Settings, session_id: str, rest: str) -> str:
-        line_name, cap = "", None
-        for word in rest.split():
-            m = _CAP.match(word)
-            if m:
-                cap = float(m.group(1))
-            elif not line_name:
-                line_name = word
-            else:
-                return f"Usage: /{COMMAND} allow [model] [$cap]"
-        line = settings.line(line_name or None)
-        if line is None or not line.usable:
-            valid = ", ".join(settings.usable_lines()) or "none"
-            return (
-                f"Advisor model {(line_name or settings.default_line)!r} is not available. "
-                f"Allowed: {valid}."
-            )
+        cap = None
+        words = rest.split()
+        if words:
+            m = _CAP.match(words[0])
+            if m is None or len(words) > 1:
+                return f"Usage: /{COMMAND} allow [$cap]"
+            cap = float(m.group(1))
+        line = settings.advisor
+        if not line.usable:
+            return f"Advisor model {line.model!r} cannot be used: {line.problem}."
         if settings.budget.cycle_error:
             return settings.budget.cycle_error
         if cap is not None and cap <= 0:
@@ -211,15 +192,11 @@ class SecondOpinionCommand:
             return f"Advisor budget cannot be checked: {exc}"
         if cap is not None:
             cap = min(cap, state.available)  # clamped to what is left today
-        self.rt.manager.grant(session_id, line=line.name, cap_usd=cap)
-        shown = (
-            money(cap)
-            if cap is not None
-            else f"{money(call_cap(settings.budget, state))} (computed per call)"
-        )
+        self.rt.manager.grant(session_id, cap_usd=cap)
+        shown = money(cap) if cap is not None else money(call_cap(settings.budget, state))
         return (
             f"Advisor calls are pre-authorized for this session ({line.name}, cap "
-            f"{shown}). The executor is told on its next turn. /{COMMAND} revoke to undo."
+            f"{shown} per call). The executor is told on its next turn. /{COMMAND} revoke to undo."
         )
 
     def revoke(self, settings: Settings, session_id: str, _: str) -> str:

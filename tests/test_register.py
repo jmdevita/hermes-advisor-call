@@ -53,15 +53,15 @@ def test_register_wires_everything(tmp_path, clock):
     }
 
 
-def test_one_aux_task_per_allowed_model(tmp_path, clock):
+def test_one_aux_task_for_the_advisor(tmp_path, clock):
     ctx = FakeCtx()
     _register(
         ctx,
         tmp_path,
         clock,
-        {"budget": {"cycle_start_day": 3}, "advisor": {"model": "opus", "also_allow": ["sonnet"]}},
+        {"budget": {"cycle_start_day": 3}, "advisor": {"model": "opus"}},
     )
-    assert set(ctx.auxiliary_tasks) == {"advisor_call_sonnet", "advisor_call_opus"}
+    assert set(ctx.auxiliary_tasks) == {"advisor_call_opus"}
     assert ctx.auxiliary_tasks["advisor_call_opus"]["defaults"]["model"] == "claude-opus-5-5"
 
 

@@ -59,11 +59,6 @@ OPEN_SCHEMA: dict[str, Any] = {
                 "description": "Your first message to the advisor: the problem, exact errors, "
                 "relevant code, what you tried, and your specific question.",
             },
-            "model": {
-                "type": "string",
-                "description": "Advisor model to call, when more than one is allowed (for "
-                "example sonnet or opus). Omit for the default.",
-            },
         },
         "required": ["reason", "question"],
     },
@@ -153,13 +148,10 @@ def _str_arg(args: Any, key: str) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
-def _usable_line(settings: Settings, name: str) -> tuple[Line | None, str]:
-    line = settings.line(name or None)
-    if line is None or not line.usable:
-        valid = ", ".join(settings.usable_lines()) or "none"
-        which = name or settings.default_line
-        detail = f": {line.problem}" if line is not None and line.problem else ""
-        return None, f"advisor model {which!r} is not available{detail}. Allowed: {valid}."
+def _usable_line(settings: Settings) -> tuple[Line | None, str]:
+    line = settings.advisor
+    if not line.usable:
+        return None, f"advisor model {line.model!r} cannot be used: {line.problem}."
     return line, ""
 
 
@@ -442,7 +434,7 @@ def open_call(
         return _error(
             "`question` is required: the problem, exact errors, code and what you already tried"
         )
-    line, problem = _usable_line(settings, _str_arg(args, "model") or _str_arg(args, "line"))
+    line, problem = _usable_line(settings)
     if line is None:
         return _error(problem)
     if settings.budget.cycle_error:
@@ -480,7 +472,7 @@ def open_call(
         return _error(f"cannot check the advisor budget, so no call was opened: {exc}")
 
     grant = rt.manager.grant_for(session_id)
-    custom = grant.cap_usd if grant is not None and grant.line == line.name else None
+    custom = grant.cap_usd if grant is not None else None
     cap = call_cap(settings.budget, state, custom)
     if cap <= 0:
         return _error(
@@ -535,7 +527,7 @@ def say(rt: Runtime, args: Any, session_id: str | None) -> dict[str, Any]:
         call = rt.manager.get(session_id, call_id)
     except CallError as err:
         return _call_error(rt, settings, err, session_id, call_id)
-    line, problem = _usable_line(settings, call.line)
+    line, problem = _usable_line(settings)
     if line is None:
         return _error(problem, call_id=call.call_id)
     if settings.budget.cycle_error:
