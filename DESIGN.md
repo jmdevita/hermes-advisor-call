@@ -478,9 +478,13 @@ fits.
   cycle budget left divided by the days left, and the per-call cap scaled
   with it (`pacing`, `max_per_call_usd`, `max_per_day_usd`). It made the
   caps hard to predict (a `per_call_usd: 0.01` showed up as $0.016 in live
-  check). Now three fixed caps: `per_call_usd`, `per_day_usd`,
-  `per_month_usd` over the cycle from `cycle_start_day`. The removed keys
-  are ignored with a warning.
+  check). v0.2.0 made all three caps fixed (`per_call_usd`, `per_day_usd`,
+  `per_month_usd` over the cycle from `cycle_start_day`); the removed keys
+  are ignored with a warning. **v0.2.1 brought the automatic daily cap
+  back** as the default (`per_day_usd: auto`, or a number for a flat cap):
+  the fixed $3.00 a day blocked a busy day even with most of the cycle
+  budget unspent, and the rolling daily cap had never caused confusion.
+  Only the scaling of the per-call cap, which had, stays removed.
 - **One advisor model.** v0.1 let the executor name another model on a call
   (`advisor.also_allow`, a `model` argument on `advisor_call_open`, one
   auxiliary slot per model, grants per model). Now there is one model,

@@ -14,7 +14,7 @@ def test_defaults_when_empty():
     assert sonnet.usable and sonnet.provider == "anthropic" and sonnet.model == "claude-sonnet-5-5"
     assert sonnet.prices.cache_read == 0.10  # DESIGN.md O-11
     assert s.cache_ttl == "5m" and s.caching
-    assert s.budget.per_month_usd == 100.0 and s.budget.per_day_usd == 3.0
+    assert s.budget.per_month_usd == 100.0 and s.budget.per_day_usd is None  # auto
     assert s.max_tokens == 4000
     assert sonnet.task_key == aux_task_key("sonnet") == "advisor_call_sonnet"
 
@@ -82,9 +82,20 @@ def test_removed_settings_warn_and_are_ignored():
             "advisor": {"also_allow": ["opus"]},
         }
     )
-    assert s.advisor.name == "sonnet" and s.budget.per_day_usd == 3.0
+    assert s.advisor.name == "sonnet" and s.budget.per_day_usd is None
     for key in ("budget.pacing", "budget.max_per_day_usd", "advisor.also_allow"):
         assert any(key in w for w in s.warnings), key
+
+
+def test_per_day_auto_or_a_number():
+    def day(value):
+        return parse_settings({"budget": {"cycle_start_day": 3, "per_day_usd": value}})
+
+    assert day("auto").budget.per_day_usd is None and day("Auto").warnings == ()
+    assert day(4).budget.per_day_usd == 4.0
+    for bad in (0, -1, "lots", True):
+        s = day(bad)
+        assert s.budget.per_day_usd is None and any("per_day_usd" in w for w in s.warnings)
 
 
 def test_cache_write_price_follows_the_ttl():

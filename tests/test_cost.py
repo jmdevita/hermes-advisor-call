@@ -224,14 +224,34 @@ def test_cycle_across_year_end():
 NOV1 = D(2026, 11, 1)
 
 
-def test_daily_cap_is_fixed():
-    b = budget()  # per_day_usd 3.00
+def test_auto_daily_cap_rolls_unspent_money_forward():
+    b = budget()  # per_day_usd auto, $100 over 30 days
+    assert budget_state(b, NOV1, spent_today=0, spent_before_today=0).allowance == pytest.approx(
+        100 / 30
+    )
+    # Nothing spent for 10 days: day 11 allows 100 / 20.
+    day11 = budget_state(b, D(2026, 11, 11), spent_today=0, spent_before_today=0)
+    assert day11.allowance == pytest.approx(5.00)
+    # $40 left with 4 days to go: $10 a day. Last day: everything left.
+    day27 = budget_state(b, D(2026, 11, 27), spent_today=0, spent_before_today=60)
+    assert day27.allowance == pytest.approx(10.00)
+    last = budget_state(b, D(2026, 11, 30), spent_today=0, spent_before_today=73)
+    assert last.allowance == pytest.approx(27.00)
+
+
+def test_auto_daily_cap_is_fixed_for_the_day_and_never_negative():
+    b = budget()
+    a1 = budget_state(b, NOV1, spent_today=0, spent_before_today=0).allowance
+    a2 = budget_state(b, NOV1, spent_today=3.0, spent_before_today=0).allowance
+    assert a1 == a2  # spend today does not change today's cap
+    over = budget_state(b, D(2026, 11, 20), spent_today=0, spent_before_today=120)
+    assert over.allowance == 0.0
+
+
+def test_flat_daily_cap():
+    b = budget(per_day_usd=3.0)
     for day, before in ((NOV1, 0), (D(2026, 11, 11), 0), (D(2026, 11, 27), 60)):
         assert budget_state(b, day, spent_today=1.0, spent_before_today=before).allowance == 3.0
-    assert (
-        budget_state(budget(per_day_usd=5.0), NOV1, spent_today=0, spent_before_today=0).allowance
-        == 5.0
-    )
 
 
 def test_cycle_budget_is_the_hard_limit():
@@ -248,23 +268,27 @@ def test_cycle_budget_is_the_hard_limit():
 
 
 def test_call_cap_is_fixed_and_clamped():
-    b = budget()  # per_call_usd 0.50
+    b = budget(per_day_usd=3.0)  # per_call_usd 0.50
     assert call_cap(b, budget_state(b, NOV1, spent_today=0, spent_before_today=0)) == 0.5
     assert call_cap(b, budget_state(b, D(2026, 11, 27), spent_today=0, spent_before_today=0)) == 0.5
     # Never more than what is left today.
     s = budget_state(b, NOV1, spent_today=2.8, spent_before_today=0)
     assert call_cap(b, s) == pytest.approx(0.2)
+    # The auto daily cap does not scale the per-call cap (v0.1 did).
+    auto = budget()
+    big_day = budget_state(auto, D(2026, 11, 27), spent_today=0, spent_before_today=0)
+    assert big_day.allowance == pytest.approx(25.0) and call_cap(auto, big_day) == 0.5
 
 
 def test_custom_cap_replaces_but_is_clamped():
-    b = budget()
+    b = budget(per_day_usd=3.0)
     s = budget_state(b, NOV1, spent_today=2.0, spent_before_today=0)  # 1.00 left today
     assert call_cap(b, s, custom_cap=2.0) == pytest.approx(1.0)
     assert call_cap(b, s, custom_cap=0.1) == pytest.approx(0.1)
 
 
 def test_preflight_order_and_reserved_elsewhere():
-    s = budget_state(budget(), NOV1, spent_today=0, spent_before_today=0)
+    s = budget_state(budget(per_day_usd=3.0), NOV1, spent_today=0, spent_before_today=0)
     kw = dict(call_cost=0.0, call_cap_usd=0.5, exchanges=0, max_messages=20, state=s)
     assert preflight_refusal(**{**kw, "exchanges": 20}, est_cost=0.01) == "turn_limit"
     assert preflight_refusal(**kw, est_cost=0.6) == "bill_cap"

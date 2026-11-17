@@ -259,7 +259,7 @@ class BudgetState:
     today: dt.date
     spent_today: float
     spent_before_today: float  # this cycle, excluding today
-    allowance: float  # the daily cap, budget.per_day_usd
+    allowance: float  # today's cap (fixed for the day)
     per_month: float
 
     @property
@@ -284,6 +284,17 @@ class BudgetState:
         return self.cycle.days_left(self.today)
 
 
+def daily_allowance(
+    budget: Budget, cycle: Cycle, today: dt.date, spent_before_today: float
+) -> float:
+    """Today's cap. A number in budget.per_day_usd is used as is. Auto (None)
+    is what is left of the cycle budget divided by the days left, so unspent
+    money rolls forward; spend today does not change it."""
+    if budget.per_day_usd is not None:
+        return budget.per_day_usd
+    return max(0.0, (budget.per_month_usd - spent_before_today) / cycle.days_left(today))
+
+
 def budget_state(
     budget: Budget, today: dt.date, *, spent_today: float, spent_before_today: float
 ) -> BudgetState:
@@ -296,7 +307,7 @@ def budget_state(
         today=today,
         spent_today=spent_today,
         spent_before_today=spent_before_today,
-        allowance=budget.per_day_usd,
+        allowance=daily_allowance(budget, cycle, today, spent_before_today),
         per_month=budget.per_month_usd,
     )
 

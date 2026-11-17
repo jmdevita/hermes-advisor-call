@@ -5,7 +5,7 @@ lets a cheap or local main model **get a second opinion from a stronger
 advisor model**, as a multi-message consult with human approval per call and
 hard bill caps.
 
-> **Status: v0.2.0.** Tested against Hermes v0.23.1: unit tests, Hermes'
+> **Status: v0.2.1.** Tested against Hermes v0.23.1: unit tests, Hermes'
 > own plugin checks, an end-to-end run through a real Hermes against a local
 > fake Anthropic server, and live checks on a real Hermes with the real API
 > through Telegram (approval and deny, session approvals, pre-authorization,
@@ -115,7 +115,7 @@ plugins:
         per_month_usd: 100.00       # budget per billing cycle
         cycle_start_day: 3          # REQUIRED, 1-31, no default
         per_call_usd: 0.50          # cap per call
-        per_day_usd: 3.00           # cap per day
+        per_day_usd: auto           # cap per day: auto, or a number for a flat cap
         max_messages_per_call: 20   # executor messages per call, including the first
         idle_timeout_minutes: 30
       approval:
@@ -142,11 +142,14 @@ against Anthropic's pricing page.
 
 ### Budget
 
-Three fixed caps, all hard limits:
+Three caps, all hard limits:
 
 - **Per call** (`per_call_usd`): fixed when the call opens and shown on the
   approval prompt. Never more than what is left today.
-- **Per day** (`per_day_usd`).
+- **Per day** (`per_day_usd`): with `auto`, the default, what is left of
+  the cycle budget divided by the days left, fixed for the day. Unspent
+  money rolls forward, so quiet days leave more room later: $100 over 30
+  days starts at $3.33 a day. Set a number for a flat daily cap instead.
 - **Per cycle** (`per_month_usd`): the cycle runs from `cycle_start_day` to
   the day before the next one (in shorter months, the last day of the
   month).

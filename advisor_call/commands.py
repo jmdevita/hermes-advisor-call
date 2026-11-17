@@ -119,8 +119,14 @@ class SecondOpinionCommand:
                 est = " (includes estimates)"
         except LedgerError:
             pass
+        auto = (
+            f" (auto: {money(state.per_month - state.spent_before_today)} left / "
+            f"{plural(state.days_left, 'day')})"
+            if b.per_day_usd is None
+            else ""
+        )
         return [
-            f"Today: {money(state.spent_today)} of {money(state.allowance)}",
+            f"Today: {money(state.spent_today)} of {money(state.allowance)}{auto}",
             f"This cycle: {money(state.spent_cycle)} of {money(state.per_month)}{est}",
             state.cycle.describe(today),
         ]

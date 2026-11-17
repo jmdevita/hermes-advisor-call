@@ -23,7 +23,10 @@ def run(cmd, args="", session_id=SID, source=None):
 def test_status(cmd):
     out = run(cmd)
     assert "Advisor: sonnet (claude-sonnet-5-5)" in out
-    assert "Today: $0.00 of $3.00" in out and "This cycle: $0.00 of $100.00" in out
+    assert (
+        "Today: $0.00 of $5.26 (auto: $100.00 left / 19 days)" in out
+        and "This cycle: $0.00 of $100.00" in out
+    )
     assert "Cycle: Nov 3 to Dec 2 (19 days left)" in out
     assert "Per-call cap: $0.50" in out
     assert "not pre-authorized" in out

@@ -42,7 +42,7 @@ DEFAULTS: dict[str, Any] = {
         "per_month_usd": 100.00,
         "cycle_start_day": None,  # required; no default on purpose
         "per_call_usd": 0.50,
-        "per_day_usd": 3.00,
+        "per_day_usd": "auto",  # or a number, for a flat daily cap
         "max_messages_per_call": 20,
         "idle_timeout_minutes": 30,
     },
@@ -110,7 +110,7 @@ class Budget:
     per_month_usd: float
     cycle_start_day: int | None  # None when missing or invalid
     per_call_usd: float
-    per_day_usd: float
+    per_day_usd: float | None  # None: auto, the budget left divided by the days left
     max_messages_per_call: int
     idle_timeout_minutes: float
 
@@ -203,6 +203,17 @@ def _cycle_start_day(raw: Any, w: _Collector) -> int | None:
     if isinstance(raw, int) and not isinstance(raw, bool) and 1 <= raw <= 31:
         return raw
     w.warn(f"budget.cycle_start_day must be an integer from 1 to 31; got {raw!r}")
+    return None
+
+
+def _per_day(raw: Any, w: _Collector) -> float | None:
+    """The daily cap: None for auto (the default), else a positive number."""
+    if raw is None or (isinstance(raw, str) and raw.strip().lower() == "auto"):
+        return None
+    ok = isinstance(raw, int | float) and not isinstance(raw, bool) and math.isfinite(raw)
+    if ok and raw > 0:
+        return float(raw)
+    w.warn(f"budget.per_day_usd must be auto or a positive number; got {raw!r}, using auto")
     return None
 
 
@@ -357,8 +368,8 @@ def parse_settings(raw: Any, auxiliary: Any = None, approvals: Any = None) -> Se
     for old in ("pacing", "max_per_call_usd", "max_per_day_usd"):
         if old in b:
             w.warn(
-                f"budget.{old} is no longer used; the caps are fixed: per_call_usd, "
-                "per_day_usd and per_month_usd"
+                f"budget.{old} is no longer used; the caps are per_call_usd, "
+                "per_day_usd (auto or a number) and per_month_usd"
             )
     budget = Budget(
         per_month_usd=_number(
@@ -368,9 +379,7 @@ def parse_settings(raw: Any, auxiliary: Any = None, approvals: Any = None) -> Se
         per_call_usd=_number(
             b.get("per_call_usd"), bd["per_call_usd"], "budget.per_call_usd", w, allow_zero=False
         ),
-        per_day_usd=_number(
-            b.get("per_day_usd"), bd["per_day_usd"], "budget.per_day_usd", w, allow_zero=False
-        ),
+        per_day_usd=_per_day(b.get("per_day_usd"), w),
         max_messages_per_call=_integer(
             b.get("max_messages_per_call"),
             bd["max_messages_per_call"],
