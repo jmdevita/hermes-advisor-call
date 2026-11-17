@@ -126,6 +126,7 @@ plugins:
         redact_secrets: true
       advisor:
         model: sonnet               # sonnet (default) or opus, or a full model id
+        effort: medium              # optional: low | medium | high | xhigh | max; unset = the model's default
         prices_per_mtok: {}         # only for models without shipped prices (see below)
         max_tokens: 4000            # reply limit per message
         timeout_seconds: 180
@@ -177,6 +178,27 @@ reaches its dollar cap sooner; raise `budget.per_call_usd` if calls end
 early.
 
 There is one advisor model, set here; the executor cannot choose another.
+
+### Choosing the advisor's effort
+
+Effort sets how hard the advisor thinks before it answers. It is optional,
+and one line next to the model (restart after changing it):
+
+```yaml
+      advisor:
+        model: opus
+        effort: medium              # low | medium | high | xhigh | max
+```
+
+Leave it out and the model uses its own default: `high` on Sonnet 5.5,
+`medium` on Opus 5.5. The setting follows `model`, so it still applies after
+you switch models. Any other value is ignored with a warning, and the model's
+default is used.
+
+Thinking is billed as output and counts against `max_tokens`, so a higher
+effort costs more per message and is more likely to fill the reply limit.
+With `xhigh` or `max`, consider raising `max_tokens`. `/second-opinion status`
+shows the effort next to the model when one is set.
 
 Any other Claude model id works if you give its prices; a model without
 prices is refused, never called. You can also override a shipped price this

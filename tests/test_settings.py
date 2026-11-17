@@ -75,6 +75,30 @@ def test_full_model_id_and_case_resolve_to_the_alias():
     assert (s.advisor.name, s.advisor.model) == ("opus", "claude-opus-5-5")
 
 
+def test_effort_is_optional_and_validated():
+    assert parse_settings(VALID).advisor.effort == ""  # the model's own default
+    s = parse_settings({**VALID, "advisor": {"model": "opus", "effort": "Medium"}})
+    assert (s.advisor.model, s.advisor.effort) == ("claude-opus-5-5", "medium")
+    assert s.warnings == ()
+    for level in ("low", "medium", "high", "xhigh", "max"):
+        assert parse_settings({**VALID, "advisor": {"effort": level}}).advisor.effort == level
+    for bad in ("hgih", "none", False, 3):
+        s = parse_settings({**VALID, "advisor": {"effort": bad}})
+        assert s.advisor.effort == "" and s.advisor.usable
+        assert any("advisor.effort must be one of low, medium" in w for w in s.warnings)
+
+
+def test_effort_follows_the_model_and_the_slot_wins():
+    s = parse_settings({**VALID, "advisor": {"model": "sonnet", "effort": "low"}})
+    assert (s.advisor.task_key, s.advisor.effort) == ("advisor_call_sonnet", "low")
+    aux = {"advisor_call_opus": {"reasoning_effort": "High"}}
+    s = parse_settings({**VALID, "advisor": {"model": "opus", "effort": "medium"}}, aux)
+    assert s.advisor.effort == "high"
+    blank = {"advisor_call_opus": {"reasoning_effort": ""}}  # Hermes' picker writes "" for unset
+    s = parse_settings({**VALID, "advisor": {"model": "opus", "effort": "medium"}}, blank)
+    assert s.advisor.effort == "medium"
+
+
 def test_removed_settings_warn_and_are_ignored():
     s = parse_settings(
         {

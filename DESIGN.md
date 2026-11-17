@@ -69,6 +69,17 @@ invisible, so the budget caps would not hold. Decision in section 2.1.
 With nothing set, Hermes sends no `thinking` field and the model runs its
 default adaptive thinking (default effort `high` on Sonnet 5.5).
 
+**Decided 2026-11-17: `advisor.effort`** (section 2.7). The plugin puts it in
+the slot's registered defaults as `reasoning_effort`. Hermes merges
+registered defaults under the user's `auxiliary.<key>` block
+(`agent/auxiliary_task_config.py`), folds `reasoning_effort` into
+`extra_body.reasoning` unless the user's `extra_body` sets `reasoning`
+(`_get_task_extra_body`), and the Anthropic adapter sends `low` to `max`
+unchanged as `output_config.effort`. Verified with `scripts/hermes-e2e.sh`
+for both models: the effort is on the wire, nothing is sent when unset, a
+user `extra_body` with `max_tokens` keeps it, and a user `reasoning_effort` in
+the slot wins.
+
 ### O-3b (new) `max_tokens` is not forwarded on the native Anthropic route
 
 **Verified, likely a Hermes bug.** `_forwards_max_tokens` is false for the
@@ -416,6 +427,14 @@ places. Replaced, before any release, with:
 - `advisor.prices_per_mtok`: prices for other models, or overrides of the
   shipped ones, keyed by model id or alias. An unpriced model is refused.
 
+`advisor.effort` (optional, added 2026-11-17): `low`, `medium`, `high`,
+`xhigh` or `max`, the levels Sonnet 5.5 and Opus 5.5 accept. It is sent as
+the slot's `reasoning_effort` (O-3), so it follows the model and needs a
+restart. Unset, nothing is sent and the model uses its default (`high` on
+Sonnet 5.5, `medium` on Opus 5.5). Any other value is ignored with a warning,
+not refused: the call still works, at the model's default. A user
+`reasoning_effort` in the slot wins, like the slot's model and provider.
+
 Internally the model is still a "line" (short name used in the approval
 rule key, the ledger and the auxiliary slot name). The old `lines` and
 `default_line` keys are ignored with a warning.
@@ -610,6 +629,8 @@ Before a release, on a real Hermes with the real API:
 
 Also run `scripts/ci.sh`, `scripts/hermes-smoke.sh` and
 `scripts/hermes-e2e.sh`, the last two against the Hermes release in use.
+Run the e2e once more with `E2E_MODEL=opus E2E_EFFORT=medium` to check the
+effort reaches the wire.
 
 ### Findings from the v0.1 checks
 

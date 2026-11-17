@@ -144,7 +144,8 @@ class SecondOpinionCommand:
     def status(self, settings: Settings, session_id: str | None, _: str) -> str:
         line = settings.advisor
         ok = "" if line.usable else f" (cannot be used: {line.problem})"
-        out = [f"Advisor: {line.name} ({line.model}){ok}"]
+        effort = f", effort {line.effort}" if line.effort else ""
+        out = [f"Advisor: {line.name} ({line.model}{effort}){ok}"]
         out += self._budget_lines(settings)
         if not settings.budget.cycle_error:
             try:

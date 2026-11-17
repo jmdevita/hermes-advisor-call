@@ -67,18 +67,23 @@ def register(
 
     # The advisor's auxiliary slot, shown in Hermes' model picker. max_tokens
     # rides in extra_body because Hermes does not forward complete()'s
-    # max_tokens on the native Anthropic route (DESIGN.md, O-3b). Changing
-    # the model or max_tokens needs a restart.
+    # max_tokens on the native Anthropic route (DESIGN.md, O-3b). The effort
+    # is the slot's reasoning_effort, which Hermes sends as
+    # output_config.effort (O-3); left out, the model uses its own default.
+    # Changing the model, max_tokens or effort needs a restart.
     line = initial.advisor
+    defaults: dict[str, Any] = {
+        "provider": line.provider or "auto",
+        "model": line.model,
+        "timeout": initial.timeout_seconds,
+        "extra_body": {"max_tokens": line.max_tokens},
+    }
+    if line.effort:
+        defaults["reasoning_effort"] = line.effort
     ctx.register_auxiliary_task(
         line.task_key,
         display_name=f"Advisor call: {line.name}",
         description=f"advisor-call advisor model ({line.name}: {line.model})",
-        defaults={
-            "provider": line.provider or "auto",
-            "model": line.model,
-            "timeout": initial.timeout_seconds,
-            "extra_body": {"max_tokens": line.max_tokens},
-        },
+        defaults=defaults,
     )
     return rt
