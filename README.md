@@ -5,13 +5,12 @@ lets a cheap or local main model **get a second opinion from a stronger
 advisor model**, as a multi-message consult with human approval per call and
 hard bill caps.
 
-> **Status: v0.1.0.** Tested against Hermes v0.23.1: unit tests, Hermes'
+> **Status: v0.2.0.** Tested against Hermes v0.23.1: unit tests, Hermes'
 > own plugin checks, an end-to-end run through a real Hermes against a local
 > fake Anthropic server, and live checks on a real Hermes with the real API
 > through Telegram (approval and deny, session approvals, pre-authorization,
-> multi-message calls, the bill caps, the reply limit). Two follow-ups compare
-> the plugin's bill with the Claude Console's; see [DESIGN.md](DESIGN.md)
-> section 7.
+> multi-message calls, the bill caps, the reply limit, and the bill against
+> the Claude Console's). See [DESIGN.md](DESIGN.md) section 7.
 
 ## How it works
 
@@ -51,13 +50,13 @@ release's commit id; Hermes requires a full 40-character commit id for
 `--ref` and refuses tag names:
 
 ```bash
-hermes plugins install jmdevita/hermes-advisor-call --ref 9312e7ccedb5d32f4c98c5df0127541de71b1c02 --no-enable
+hermes plugins install jmdevita/hermes-advisor-call --ref <full-commit-id> --no-enable
 ```
 
-That is the commit of `v0.1.0`. For another release, look up its commit id:
+Look up a release's commit id from its tag, for example `v0.2.0`:
 
 ```bash
-git ls-remote https://github.com/jmdevita/hermes-advisor-call refs/tags/<tag>
+git ls-remote https://github.com/jmdevita/hermes-advisor-call refs/tags/v0.2.0
 ```
 
 ```bash
